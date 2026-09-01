@@ -1,0 +1,16 @@
+{
+  "records": [
+    {"kind": "calendar_event", "date": "2026-07-18", "start_time": "09:00",
+     "end_time": "10:00", "summary": "SAMPLE — Riverbend demo call", "category": ""},
+    {"kind": "fact", "topic": "uiuc:sample-orientation", "fact_kind": "date",
+     "date": "2026-08-19", "recurs": "",
+     "body": "SAMPLE — orientation session per registrar email (delete me)"},
+    {"kind": "document", "name": "SAMPLE — Riverbend service agreement",
+     "path": "drive://Clockwork/Contracts/sample.pdf", "doc_kind": "contract",
+     "notes": "sample payload row — delete after testing"},
+    {"kind": "note", "topic": "email: SAMPLE Riverbend",
+     "body": "SAMPLE — owner replied: wants pricing in writing before Friday."},
+    {"kind": "transaction", "date": "2026-07-01", "description": "TWILIO",
+     "amount": -20.0, "_comment": "intentionally invalid — proves the loader rejects money"}
+  ]
+}

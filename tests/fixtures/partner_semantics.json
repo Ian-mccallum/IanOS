@@ -1,0 +1,103 @@
+[
+  {
+    "name": "unfinished standalone",
+    "rows": [
+      {"id": 1, "title": "Plan the date", "parent_id": null, "done": false}
+    ],
+    "expected": {
+      "groups": [{"parent_id": 1, "child_ids": [], "complete": false}],
+      "actionable_ids": [1],
+      "open_count": 1,
+      "next_action_id": 1
+    }
+  },
+  {
+    "name": "open children suppress parent",
+    "rows": [
+      {"id": 1, "title": "Plan the date", "parent_id": null, "done": false},
+      {"id": 2, "title": "Pick a restaurant", "parent_id": 1, "done": false},
+      {"id": 3, "title": "Book a table", "parent_id": 1, "done": false}
+    ],
+    "expected": {
+      "groups": [{"parent_id": 1, "child_ids": [2, 3], "complete": false}],
+      "actionable_ids": [2, 3],
+      "open_count": 2,
+      "next_action_id": 2
+    }
+  },
+  {
+    "name": "done parent keeps unfinished child open",
+    "rows": [
+      {"id": 1, "title": "Plan the date", "parent_id": null, "done": true},
+      {"id": 2, "title": "Pick a restaurant", "parent_id": 1, "done": true},
+      {"id": 3, "title": "Book a table", "parent_id": 1, "done": false}
+    ],
+    "expected": {
+      "groups": [{"parent_id": 1, "child_ids": [2, 3], "complete": false}],
+      "actionable_ids": [3],
+      "open_count": 1,
+      "next_action_id": 3
+    }
+  },
+  {
+    "name": "done children return focus to outcome",
+    "rows": [
+      {"id": 1, "title": "Plan the date", "parent_id": null, "done": false},
+      {"id": 2, "title": "Pick a restaurant", "parent_id": 1, "done": true},
+      {"id": 3, "title": "Book a table", "parent_id": 1, "done": true}
+    ],
+    "expected": {
+      "groups": [{"parent_id": 1, "child_ids": [2, 3], "complete": false}],
+      "actionable_ids": [1],
+      "open_count": 1,
+      "next_action_id": 1
+    }
+  },
+  {
+    "name": "fully complete group",
+    "rows": [
+      {"id": 1, "title": "Plan the date", "parent_id": null, "done": true},
+      {"id": 2, "title": "Pick a restaurant", "parent_id": 1, "done": true}
+    ],
+    "expected": {
+      "groups": [{"parent_id": 1, "child_ids": [2], "complete": true}],
+      "actionable_ids": [],
+      "open_count": 0,
+      "next_action_id": null
+    }
+  },
+  {
+    "name": "archived final child restores standalone meaning",
+    "rows": [
+      {"id": 1, "title": "Plan the date", "parent_id": null, "done": false, "deleted_at": null},
+      {"id": 2, "title": "Book a table", "parent_id": 1, "done": false, "deleted_at": "2026-08-16 10:00:00"}
+    ],
+    "expected": {
+      "groups": [{"parent_id": 1, "child_ids": [], "complete": false}],
+      "actionable_ids": [1],
+      "open_count": 1,
+      "next_action_id": 1
+    }
+  },
+  {
+    "name": "root order then child order is stable",
+    "rows": [
+      {"id": 11, "title": "Final check", "parent_id": 10, "done": true},
+      {"id": 4, "title": "Choose flowers", "parent_id": 2, "done": false},
+      {"id": 10, "title": "Write the card", "parent_id": null, "done": false},
+      {"id": 7, "title": "Call her", "parent_id": null, "done": false},
+      {"id": 5, "title": "Buy flowers", "parent_id": 2, "done": false},
+      {"id": 2, "title": "Bring flowers", "parent_id": null, "done": true}
+    ],
+    "expected": {
+      "groups": [
+        {"parent_id": 2, "child_ids": [4, 5], "complete": false},
+        {"parent_id": 7, "child_ids": [], "complete": false},
+        {"parent_id": 10, "child_ids": [11], "complete": false}
+      ],
+      "actionable_ids": [4, 5, 7, 10],
+      "open_count": 4,
+      "next_action_id": 4
+    }
+  }
+]

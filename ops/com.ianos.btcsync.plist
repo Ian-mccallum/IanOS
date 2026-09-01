@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  SPEC-v18 phase 2: give ianOS eyes.
+
+  This retains its original label so existing installations need no remove /
+  reinstall, but now runs every complete inbound seam. A configured personal
+  inbox is collected even when nobody opens that UI; absent optional seams are
+  skipped, and a partial credential pair is an explicit failed run.
+
+  StartInterval (not StartCalendarInterval): every 15 minutes is the cadence,
+  no particular clock time matters. launchd runs a missed interval once on
+  wake, so a closed lid self-heals rather than skipping a whole afternoon.
+
+  Deliberately no KeepAlive and no failure memo: a 15-minute job hitting the
+  network WILL fail transiently (waking before wifi associates, a Vercel
+  blip), and a memo per failure would be exactly the nag this product bans.
+  The log is the record; a genuinely dead sync shows up as an inbound card
+  that never appears, and `make sync-btc` reports the reason on demand.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ianos.btcsync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__IANOS_DIR__/.venv/bin/python</string>
+        <string>__IANOS_DIR__/ingest/sync_btc.py</string>
+        <string>--all-configured</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__IANOS_DIR__</string>
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__IANOS_DIR__/data/btcsync.log</string>
+    <key>StandardErrorPath</key>
+    <string>__IANOS_DIR__/data/btcsync.log</string>
+</dict>
+</plist>

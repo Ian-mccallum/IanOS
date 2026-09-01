@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover so the dark UI runs under the notch/home indicator.
+         interactive-widget=resizes-content makes the on-screen keyboard shrink
+         the LAYOUT viewport, so 100dvh and the fixed tab bar follow it instead
+         of sitting behind the keyboard. Where it is unsupported (iOS Safari),
+         lib/viewport.js measures the same inset from visualViewport. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <!-- Paints before any stylesheet loads: a cold/slow PWA launch otherwise
+         shows a white document flash before styles.css's own background wins. -->
+    <style>html { background: #04050a; }</style>
+    <!-- BEFORE CSS: standalone must use 100vh, not 100dvh (WebKit #254868).
+         navigator.standalone is the reliable iOS signal; the media query is not. -->
+    <script>
+      (function () {
+        var s = navigator.standalone === true
+          || (window.matchMedia && (
+            window.matchMedia('(display-mode: standalone)').matches
+            || window.matchMedia('(display-mode: fullscreen)').matches
+          ));
+        document.documentElement.style.setProperty('--app-height', s ? '100vh' : '100dvh');
+        if (s) document.documentElement.dataset.ianosStandalone = '1';
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- PWA: installs to the home screen, launches without browser chrome -->
+    <link rel="icon" href="/icons/favicon-64.png" type="image/png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#04050a" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ianOS" />
+
+    <title>ianOS</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

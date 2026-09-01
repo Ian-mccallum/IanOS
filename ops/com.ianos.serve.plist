@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Keeps ianOS reachable from the phone the whole time the Mac is awake.
+     KeepAlive restarts it if it ever dies; RunAtLoad starts it at login. When
+     the Mac sleeps the process simply stops being reachable and serves again on
+     wake — no reconnect step on the phone, because the Tailscale address never
+     changed. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ianos.serve</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__IANOS_DIR__/.venv/bin/uvicorn</string>
+        <string>api.main:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8787</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__IANOS_DIR__</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>__IANOS_DIR__/data/serve.log</string>
+    <key>StandardErrorPath</key>
+    <string>__IANOS_DIR__/data/serve.log</string>
+</dict>
+</plist>

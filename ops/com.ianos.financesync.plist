@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- SPEC-v20: independent morning refresh for every configured finance source. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ianos.financesync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__IANOS_DIR__/.venv/bin/python</string>
+        <string>__IANOS_DIR__/ingest/sync_finance.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__IANOS_DIR__</string>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__IANOS_DIR__/data/financesync.log</string>
+    <key>StandardErrorPath</key>
+    <string>__IANOS_DIR__/data/financesync.log</string>
+</dict>
+</plist>

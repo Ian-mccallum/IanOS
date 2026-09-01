@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  SPEC-v32 Part C: give ianOS a live Canvas feed instead of a manual .ics drop.
+
+  StartInterval (not StartCalendarInterval): a class schedule does not change
+  minute to minute, so every 6 hours (21600s) is plenty. launchd runs a missed
+  interval once on wake, so a closed lid self-heals rather than skipping a run.
+
+  Deliberately no KeepAlive and no failure memo: a periodic network job WILL
+  fail transiently (Canvas maintenance, wifi not yet associated), and a memo
+  per failure would be exactly the nag this product bans (the btcsync
+  precedent). The log is the record; `ingest/sync_canvas.py` also self-manages
+  school_sync_state.last_attempt/last_success/last_error/item_count, so a
+  genuinely stuck feed shows up as a stale Canvas candidate on the dashboard
+  instead of silence.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ianos.canvassync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__IANOS_DIR__/.venv/bin/python</string>
+        <string>__IANOS_DIR__/ingest/sync_canvas.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__IANOS_DIR__</string>
+    <key>StartInterval</key>
+    <integer>21600</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__IANOS_DIR__/data/canvassync.log</string>
+    <key>StandardErrorPath</key>
+    <string>__IANOS_DIR__/data/canvassync.log</string>
+</dict>
+</plist>

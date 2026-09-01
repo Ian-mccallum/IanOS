@@ -1,0 +1,730 @@
+{
+  "schema_version": 1,
+  "term": "Fall 2026",
+  "timezone": "America/Chicago",
+  "privacy": {
+    "contains_canvas_credentials": false,
+    "contains_canvas_feed_urls": false,
+    "contains_raw_assignment_urls": false,
+    "source_of_truth_after_sync": "Normalized Calendar/Canvas events, not this seed"
+  },
+  "calendar_projection": {
+    "instruction_start": "2026-08-24",
+    "instruction_end": "2026-12-09",
+    "excluded_dates": [
+      "2026-09-07",
+      "2026-11-23",
+      "2026-11-24",
+      "2026-11-25",
+      "2026-11-26",
+      "2026-11-27"
+    ],
+    "source_ref": "https://registrar.illinois.edu/fall-2026-academic-calendar/"
+  },
+  "generated_from": "Sanitized sample inventory for the public mirror. The schema is the real one; course names, staff, sections, rooms and meeting times are placeholders.",
+  "courses": [
+    {
+      "course_id": "stat-120",
+      "code": "STAT 120",
+      "name": "Statistics Foundations",
+      "credits": 4,
+      "term_part": "full_semester",
+      "sections": {
+        "lab": {
+          "section": "A1"
+        },
+        "lecture": {
+          "section": "B1"
+        }
+      },
+      "instructional_staff": [
+        {
+          "name": "Course staff",
+          "role": "instructor"
+        }
+      ],
+      "meetings": [
+        {
+          "id": "stat-120-lecture",
+          "kind": "lecture",
+          "days": [
+            "MO",
+            "WE",
+            "FR"
+          ],
+          "start_local": "10:00",
+          "end_local": "10:50",
+          "location": "Room TBD",
+          "modality": "in_person"
+        },
+        {
+          "id": "stat-120-lab",
+          "kind": "lab",
+          "days": [
+            "TU"
+          ],
+          "start_local": "13:00",
+          "end_local": "14:20",
+          "location": "Room TBD",
+          "modality": "in_person"
+        }
+      ],
+      "grading": {
+        "total_points": 1000,
+        "categories": [
+          {
+            "name": "Lecture attendance and participation",
+            "points": 30,
+            "weight_percent": 3,
+            "drops": 9
+          },
+          {
+            "name": "Lab sections",
+            "points": 120,
+            "weight_percent": 12,
+            "drops": 2
+          },
+          {
+            "name": "Homework",
+            "points": 150,
+            "weight_percent": 15,
+            "drops": 3
+          },
+          {
+            "name": "Midterm 1",
+            "points": 200,
+            "weight_percent": 20
+          },
+          {
+            "name": "Midterm 2",
+            "points": 200,
+            "weight_percent": 20
+          },
+          {
+            "name": "Comprehensive final exam",
+            "points": 300,
+            "weight_percent": 30
+          }
+        ],
+        "target_cutoffs": {
+          "A_plus": 930,
+          "A": 900,
+          "A_minus": 870
+        }
+      },
+      "key_policy_flags": {
+        "late_work": "No late submissions; lowest 3 homework and lowest 2 lab scores are dropped.",
+        "weekly_rhythm": "Homework is generally due 11:59 PM after the next lecture; labs are due Monday at 11:59 PM.",
+        "exam_mode": "CBTF",
+        "ai_policy": {
+          "status": "not_specified_in_user_provided_syllabus",
+          "portal_behavior": "Treat assignment use as unknown until course staff or assignment instructions explicitly permit it."
+        }
+      },
+      "known_major_dates": [
+        {
+          "label": "Optional Exam 0 window",
+          "start_date": "2026-09-16",
+          "end_date": "2026-09-19",
+          "reservation_opens": "2026-09-04"
+        },
+        {
+          "label": "Midterm 1 CBTF window",
+          "start_date": "2026-09-23",
+          "end_date": "2026-09-26",
+          "reservation_opens": "2026-09-10"
+        },
+        {
+          "label": "Midterm 2 CBTF window",
+          "start_date": "2026-10-28",
+          "end_date": "2026-10-31",
+          "reservation_opens": "2026-10-15"
+        },
+        {
+          "label": "CBTF final exam window",
+          "start_date": "2026-12-10",
+          "end_date": "2026-12-15",
+          "reservation_opens": "2026-10-19"
+        }
+      ],
+      "source_kind": "sample"
+    },
+    {
+      "course_id": "anth-210",
+      "code": "ANTH 210",
+      "name": "Introduction to Anthropology",
+      "credits": 4,
+      "term_part": "first_half",
+      "sections": {
+        "online": {
+          "section": "A1"
+        }
+      },
+      "instructional_staff": [
+        {
+          "name": "Course staff",
+          "role": "instructor"
+        }
+      ],
+      "meetings": [
+        {
+          "id": "anth-210-course",
+          "kind": "course",
+          "days": [
+            "TU"
+          ],
+          "start_local": "13:00",
+          "end_local": "14:20",
+          "location": "Room TBD",
+          "modality": "asynchronous_online"
+        }
+      ],
+      "grading": {
+        "total_points": 750,
+        "categories": [
+          {
+            "name": "In-lecture questions",
+            "points": 120,
+            "weight_percent": 16
+          },
+          {
+            "name": "Discussion participation",
+            "points": 90,
+            "weight_percent": 12
+          },
+          {
+            "name": "Discussion submission",
+            "points": 30,
+            "weight_percent": 4
+          },
+          {
+            "name": "Discussion assessment",
+            "points": 20,
+            "weight_percent": 2.6667
+          },
+          {
+            "name": "Quiz",
+            "points": 230,
+            "weight_percent": 30.6667
+          },
+          {
+            "name": "Application activity",
+            "points": 260,
+            "weight_percent": 34.6667
+          }
+        ],
+        "target_cutoffs": {
+          "A_plus": 751,
+          "A": 690,
+          "A_minus": 675
+        },
+        "extra_credit": "Two opportunities, in Weeks 1 and 8."
+      },
+      "key_policy_flags": {
+        "course_pace": "Accelerated 8-week course; syllabus suggests 9-12 hours per week and checking Canvas at least 4 days each week.",
+        "late_work": "Deadlines are strict; assignments normally appear each Monday and are often due Thursday or Sunday at 11:55 PM.",
+        "exams": "No midterm or final exam.",
+        "ai_policy": {
+          "status": "not_specified_in_user_provided_syllabus",
+          "portal_behavior": "Treat assignment use as unknown until course staff or assignment instructions explicitly permit it."
+        }
+      },
+      "known_major_dates": [
+        {
+          "label": "Course orientation (extra credit)",
+          "date": "2026-08-27",
+          "time_local": "23:55",
+          "points": 10
+        },
+        {
+          "label": "Week 1 lecture",
+          "date": "2026-08-30",
+          "time_local": "23:55",
+          "points": 15
+        },
+        {
+          "label": "Week 1 discussion",
+          "date": "2026-08-30",
+          "time_local": "23:55",
+          "points": 15
+        },
+        {
+          "label": "Week 1 quiz",
+          "date": "2026-08-30",
+          "time_local": "23:55",
+          "points": 30
+        },
+        {
+          "label": "Week 1 application activity",
+          "date": "2026-08-30",
+          "time_local": "23:55",
+          "points": 30
+        },
+        {
+          "label": "Course concludes",
+          "date": "2026-10-16"
+        }
+      ],
+      "source_kind": "sample"
+    },
+    {
+      "course_id": "bus-120",
+      "code": "BUS 120",
+      "name": "Business Fundamentals",
+      "credits": 3,
+      "term_part": "full_semester",
+      "sections": {
+        "discussion": {
+          "section": "A1"
+        },
+        "lecture": {
+          "section": "B1"
+        }
+      },
+      "instructional_staff": [
+        {
+          "name": "Course staff",
+          "role": "instructor"
+        }
+      ],
+      "meetings": [
+        {
+          "id": "bus-120-lecture",
+          "kind": "lecture",
+          "days": [
+            "MO",
+            "WE",
+            "FR"
+          ],
+          "start_local": "12:00",
+          "end_local": "12:50",
+          "location": "Zoom",
+          "modality": "remote_sync"
+        },
+        {
+          "id": "bus-120-discussion",
+          "kind": "discussion",
+          "days": [
+            "TU"
+          ],
+          "start_local": "13:00",
+          "end_local": "14:20",
+          "location": "Room TBD",
+          "modality": "in_person"
+        }
+      ],
+      "grading": {
+        "total_points": 1000,
+        "categories": [
+          {
+            "name": "Tuesday attendance and engagement",
+            "points": 65,
+            "weight_percent": 6.5
+          },
+          {
+            "name": "Friday attendance and engagement",
+            "points": 130,
+            "weight_percent": 13
+          },
+          {
+            "name": "Pre-class materials and checkpoints",
+            "points": 96,
+            "weight_percent": 9.6
+          },
+          {
+            "name": "Quizzes",
+            "points": 75,
+            "weight_percent": 7.5
+          },
+          {
+            "name": "Discussion leader grade",
+            "points": 30,
+            "weight_percent": 3
+          },
+          {
+            "name": "Class contributor grade",
+            "points": 30,
+            "weight_percent": 3
+          },
+          {
+            "name": "Professional skills",
+            "points": 234,
+            "weight_percent": 23.4
+          },
+          {
+            "name": "Capstone individual reports",
+            "points": 10,
+            "weight_percent": 1
+          },
+          {
+            "name": "Capstone team deliverables",
+            "points": 240,
+            "weight_percent": 24
+          },
+          {
+            "name": "Capstone self and peer evaluation",
+            "points": 10,
+            "weight_percent": 1
+          },
+          {
+            "name": "Capstone peer grade",
+            "points": 30,
+            "weight_percent": 3
+          },
+          {
+            "name": "Capstone client presentation",
+            "points": 50,
+            "weight_percent": 5
+          }
+        ],
+        "target_cutoffs": {
+          "A_plus": 1000,
+          "A": 930,
+          "A_minus": 900
+        }
+      },
+      "key_policy_flags": {
+        "capstone": "Four-to-five-person team project; research in Weeks 6-8, selection in Weeks 9-10, plan in Weeks 11-12, and client presentation in Weeks 13-15.",
+        "ai_policy": {
+          "status": "permitted_with_conditions",
+          "permitted_uses": [
+            "Shorten or revise the student's own text",
+            "Create study aids",
+            "Test and practice course knowledge",
+            "Conduct basic research"
+          ],
+          "closed_book_assessments": "not_allowed",
+          "requirements": [
+            "Follow assignment-specific instructions",
+            "Document and attribute AI contributions",
+            "Verify facts and cite original sources",
+            "Keep a journal of prompts, responses, and usage"
+          ]
+        }
+      },
+      "known_major_dates": [],
+      "source_kind": "sample"
+    },
+    {
+      "course_id": "econ-110",
+      "code": "ECON 110",
+      "name": "Principles of Microeconomics",
+      "credits": 3,
+      "term_part": "full_semester",
+      "sections": {
+        "discussion": {
+          "section": "A1"
+        },
+        "lecture": {
+          "section": "B1"
+        }
+      },
+      "instructional_staff": [
+        {
+          "name": "Course staff",
+          "role": "instructor"
+        }
+      ],
+      "meetings": [
+        {
+          "id": "econ-110-lecture",
+          "kind": "lecture",
+          "days": [
+            "MO",
+            "WE",
+            "FR"
+          ],
+          "start_local": "13:00",
+          "end_local": "13:50",
+          "location": "Room TBD",
+          "modality": "in_person"
+        },
+        {
+          "id": "econ-110-discussion",
+          "kind": "discussion",
+          "days": [
+            "TU"
+          ],
+          "start_local": "13:00",
+          "end_local": "14:20",
+          "location": "Room TBD",
+          "modality": "in_person"
+        }
+      ],
+      "grading": {
+        "total_points": null,
+        "categories": [
+          {
+            "name": "Lesson assignments",
+            "weight_percent": 5,
+            "drops": 1
+          },
+          {
+            "name": "Weekly online quizzes",
+            "weight_percent": 5,
+            "drops": 3
+          },
+          {
+            "name": "Highest-scoring midterm",
+            "weight_percent": 25
+          },
+          {
+            "name": "Middle-scoring midterm",
+            "weight_percent": 20
+          },
+          {
+            "name": "Lowest-scoring midterm",
+            "weight_percent": 15
+          },
+          {
+            "name": "Final exam",
+            "weight_percent": 30
+          }
+        ],
+        "target_cutoffs": {
+          "A_plus": 97,
+          "A": 93,
+          "A_minus": 90
+        }
+      },
+      "key_policy_flags": {
+        "quiz_window": "Wednesday 2:00 PM through Sunday 11:00 PM; two attempts with the higher score retained; no quiz during a midterm week.",
+        "lesson_assignments": "Due at 11:00 PM; retries allowed before deadline; lowest score is dropped; later practice can replace an original score at 70% value if higher.",
+        "exam_policy": "No midterm makeups. Final is mandatory; missed-midterm rules reweight the final only with the syllabus-defined conditions.",
+        "ai_policy": {
+          "status": "not_specified_in_user_provided_syllabus",
+          "portal_behavior": "Treat assignment use as unknown until course staff or assignment instructions explicitly permit it."
+        }
+      },
+      "known_major_dates": [],
+      "source_kind": "sample"
+    },
+    {
+      "course_id": "fin-180",
+      "code": "FIN 180",
+      "name": "Finance Seminar",
+      "credits": 1,
+      "term_part": "full_semester",
+      "sections": {
+        "seminar": {
+          "section": "A1"
+        }
+      },
+      "instructional_staff": [
+        {
+          "name": "Course staff",
+          "role": "instructor"
+        }
+      ],
+      "meetings": [
+        {
+          "id": "fin-180-seminar",
+          "kind": "seminar",
+          "days": [
+            "TU"
+          ],
+          "start_local": "13:00",
+          "end_local": "14:20",
+          "location": "Zoom",
+          "modality": "remote_sync"
+        }
+      ],
+      "grading": {
+        "total_points": 300,
+        "categories": [
+          {
+            "name": "Class attendance",
+            "points": 100,
+            "weight_percent": 33.33
+          },
+          {
+            "name": "Guest speaker panel question",
+            "points": 100,
+            "weight_percent": 33.33,
+            "drops": 1
+          },
+          {
+            "name": "Market and company analysis project",
+            "points": 50,
+            "weight_percent": 16.67
+          },
+          {
+            "name": "Career assessment essay",
+            "points": 50,
+            "weight_percent": 16.67
+          }
+        ],
+        "target_cutoffs": {
+          "A": 93,
+          "A_minus": 90
+        }
+      },
+      "key_policy_flags": {
+        "attendance": "Attendance begins September 2; four absences are allowed without penalty. Zoom attendance records entry/exit and video state.",
+        "guest_panel_questions": "Two questions are due by Sunday at 11:30 PM Central before each Wednesday guest-speaker panel.",
+        "ai_policy": {
+          "status": "permitted_with_conditions",
+          "permitted_uses": [
+            "Shorten or revise the student's own text",
+            "Create study aids",
+            "Test and practice course knowledge",
+            "Conduct basic research"
+          ],
+          "closed_book_assessments": "not_allowed",
+          "requirements": [
+            "Follow assignment-specific instructions",
+            "Document and attribute AI contributions",
+            "Verify facts and cite original sources",
+            "Keep a journal of prompts, responses, and usage"
+          ]
+        }
+      },
+      "known_major_dates": [
+        {
+          "label": "Attendance begins",
+          "date": "2026-09-02"
+        },
+        {
+          "label": "Market and company analysis project due",
+          "date": "2026-10-21"
+        },
+        {
+          "label": "Career assessment essay due",
+          "date": "2026-12-09"
+        }
+      ],
+      "source_kind": "sample"
+    },
+    {
+      "course_id": "span-210",
+      "code": "SPAN 210",
+      "name": "Spanish Conversation",
+      "credits": 3,
+      "term_part": "full_semester",
+      "sections": {
+        "discussion": {
+          "section": "A1"
+        },
+        "lecture": {
+          "section": "B1"
+        }
+      },
+      "instructional_staff": [
+        {
+          "name": "Course staff",
+          "role": "instructor"
+        }
+      ],
+      "meetings": [
+        {
+          "id": "span-210-lecture",
+          "kind": "lecture",
+          "days": [
+            "MO",
+            "WE",
+            "FR"
+          ],
+          "start_local": "15:00",
+          "end_local": "15:50",
+          "location": "Room TBD",
+          "modality": "in_person"
+        },
+        {
+          "id": "span-210-discussion",
+          "kind": "discussion",
+          "days": [
+            "TU"
+          ],
+          "start_local": "13:00",
+          "end_local": "14:20",
+          "location": "Room TBD",
+          "modality": "in_person"
+        }
+      ],
+      "grading": {
+        "total_points": null,
+        "categories": [
+          {
+            "name": "Participation",
+            "weight_percent": 10,
+            "notes": "Friday discussion attendance and participation"
+          },
+          {
+            "name": "Aha Moments and Muddiest Points",
+            "weight_percent": 5,
+            "notes": "Weekly lecture responses due Fridays"
+          },
+          {
+            "name": "Quizzes",
+            "weight_percent": 10,
+            "notes": "Weekly quizzes generally due Mondays"
+          },
+          {
+            "name": "Written assignments",
+            "weight_percent": 25,
+            "notes": "Four creative-writing or text-analysis tasks"
+          },
+          {
+            "name": "Midterm exam",
+            "weight_percent": 10,
+            "notes": "In person, 1.5 hours"
+          },
+          {
+            "name": "Take-home midterm essay",
+            "weight_percent": 10
+          },
+          {
+            "name": "Final exam",
+            "weight_percent": 30,
+            "notes": "In person, 3 hours with essay component"
+          }
+        ],
+        "target_cutoffs": {
+          "A_plus": 98,
+          "A": 93,
+          "A_minus": 90
+        }
+      },
+      "key_policy_flags": {
+        "attendance": "Two Friday discussion absences are allowed; each subsequent unexcused absence lowers the final participation grade by one-third of a letter. More than three late arrivals count as one absence.",
+        "late_work": "Written assignments and take-home essay lose a half-letter grade per calendar day late; late quizzes and exams are not accepted without sufficient cause.",
+        "weekly_rhythm": "Aha Moments and Muddiest Points are due Fridays; quizzes are generally due Mondays. The Canvas Course Log is the updated schedule.",
+        "ai_policy": {
+          "status": "not_specified_in_user_provided_syllabus",
+          "portal_behavior": "Treat assignment use as unknown until course staff or assignment instructions explicitly permit it."
+        }
+      },
+      "known_major_dates": [
+        {
+          "label": "Written assignment 1",
+          "date": "2026-09-19"
+        },
+        {
+          "label": "Midterm exam",
+          "date": "2026-10-03"
+        },
+        {
+          "label": "Take-home midterm essay",
+          "date": "2026-10-07"
+        },
+        {
+          "label": "Written assignment 2",
+          "date": "2026-10-24"
+        },
+        {
+          "label": "Written assignment 3",
+          "date": "2026-11-14"
+        },
+        {
+          "label": "Written assignment 4",
+          "date": "2026-12-09"
+        },
+        {
+          "label": "Final exam",
+          "date": null
+        }
+      ],
+      "source_kind": "sample"
+    }
+  ]
+}
