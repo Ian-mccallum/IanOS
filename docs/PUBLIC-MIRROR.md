@@ -2,17 +2,19 @@
 
 ianOS runs one person's real life, so the repo it lives in is private. This
 repository is a scrubbed mirror of it, published to show the architecture and
-the way it was built. It carries no history: every publish is a fresh
-snapshot with a single commit.
+the way it was built. It carries none of the private repo's history: it
+began as one snapshot commit and each refresh adds one more.
 
 ## What is different from the private repo
 
-- **History.** None. The private repo's history contains things a public one
-  must not (a server log with private network addresses, a real class
-  schedule). Rewriting history is error-prone, so the mirror simply has none.
+- **History.** None of the private repo's. That history contains things a
+  public one must not (a server log with private network addresses, a real
+  class schedule). Rewriting history is error-prone, so the mirror starts
+  from a clean snapshot and each refresh adds one commit.
 - **Data.** No database, no leads, no journal, no `.env`. The mirror is built
-  from tracked files only, so anything untracked in the private repo cannot
-  be exported by construction. `make setup` seeds demo data.
+  from one private commit, so anything uncommitted, untracked or gitignored
+  in the private repo cannot be exported by construction. `make setup` seeds
+  demo data.
 - **The dossier.** `agents/dossier.md` is the file every chat prompt reads
   about the user. The mirror ships a sample with the same headings.
 - **The school inventory.** `data/fall_2026_school_seed.json` keeps the real
@@ -30,8 +32,8 @@ snapshot with a single commit.
 
 ## How the mirror is produced
 
-A private script enumerates `git ls-files`, applies an ordered substitution
-table, re-encodes images, then scans the output against a deny list and
+A private script enumerates one private commit, applies an ordered
+substitution table, re-encodes images, then scans the output against a deny list and
 refuses to finish if anything slipped through. A substitution rule that fires
 zero times is reported, so a typo in the table cannot silently stop
 redacting. The script and its table live only in the private repo: the map

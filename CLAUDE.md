@@ -58,6 +58,7 @@ make backup-verify  # deep proof: re-read all data + test-restore + integrity_ch
 make restore        # restore latest (or SNAPSHOT=<id>) into a NEW folder, never in place
 make schedule-backup# nightly 21:45 backup via launchd (refuses if unconfigured)
 make clean          # delete data/ianos.db (and -wal/-shm)
+make export-public  # rebuild + commit the scrubbed public mirror in ../ianOS-public (SPEC-v39)
 ```
 
 Run a single test:
@@ -682,8 +683,10 @@ Client-side privacy curtain before any `/api/state` poll. Not network auth.
 
 - **UI:** `LockScreen.jsx` + `lib/lock.js`. Huge logo, America/Chicago 12-hour
   clock + date, Face ID (WebAuthn platform) or password `ianos`.
-- **Session:** unlocked in `sessionStorage`; re-locks after ≥90s backgrounded;
-  cold open always locked. `--crit` banned on this surface.
+- **Session:** unlocked in `sessionStorage`; re-locks after ≥15min backgrounded
+  (`BG_RELOCK_MS` in `lib/lock.js`; was 90s through SPEC-v12, widened after it
+  proved a false-alarm generator on a brief app switch); cold open always
+  locked. `--crit` banned on this surface.
 - **HTTPS required for Face ID.** Tailscale `https://` install (see
   `docs/PHONE.md`). LAN HTTP → password only.
 - **Brand sources:** `dashboard/public/ianOS.jpg` (app icon) and `logo.png`
@@ -856,6 +859,44 @@ bash + restic + sqlite3 only, so it moves to the Linux Framework laptop with a
 10-line systemd timer (in BACKUP.md). `tests/test_backup.py` asserts the laws
 against a local throwaway repo, skipped when restic is absent.
 
+### Two repos: the private one and the public mirror (SPEC-v39)
+
+The private repo is `Ian-mccallum/ianOS-private` (renamed from `ianOS` on
+2026-09-01). The public `Ian-mccallum/ianOS` is a **scrubbed mirror carrying none of the
+private history** (one commit per publish), regenerated from the private
+repo by `make export-public`
+(`scripts/export_public.py` plus templates in `scripts/public_export/`, both
+private and never exported). Nothing is developed in the mirror: a fix lands
+in the private repo, then the mirror is rebuilt and pushed from
+`../ianOS-public`. **Never flip the private repo public and never push its
+history anywhere public**: that history holds a server log with tailnet
+addresses and the real class schedule. If you are reading this inside the
+mirror, you are looking at a snapshot; open an issue rather than a PR.
+
+- **Committed means exportable.** The export reads a private commit (HEAD
+  by default), never the working tree, so uncommitted edits, untracked files
+  and gitignored paths cannot leak, and anything committed can.
+  A new personal string in a tracked file (a name, a balance, a room, a
+  credential, a home path) needs a substitution rule or a path exclusion in
+  the export script **before it is committed**; the leak check only knows
+  the strings it has been taught. Specs that quote live numbers (SPEC-v37
+  does) get scrubbed before they are committed.
+- **Identifiers differ in the mirror.** The partner pillar, table, page and
+  fact namespace are `partner` there; a few example businesses and owners in
+  specs and tests are fictional; the six real course codes and two rooms are
+  replaced; `agents/dossier.md` and `data/fall_2026_school_seed.json` are
+  samples; the mirror's lock password is `ianos`. When triaging a public
+  issue, translate back before grepping the private repo.
+- **The public README is a template** (`scripts/public_export/README.md`),
+  and the private `README.md` becomes `docs/MANUAL.md` in the mirror. Edit
+  the template, never the mirror.
+- **A rule that fires zero times is a finding, not noise.** The export
+  prints them, because a rephrased or line-wrapped sentence silently stops
+  being redacted otherwise.
+
+The full law, the substitution map and the publish procedure live in
+`docs/SPEC-v39-public-mirror.md` (private, excluded from the mirror).
+
 ## Conventions & gotchas
 
 - Every executable module does `sys.path.insert(0, ROOT)` then imports `core.*`.
@@ -887,6 +928,9 @@ against a local throwaway repo, skipped when restic is absent.
   clarity wins.
 - **Anti-slop:** no em dashes, no marketing fluff. See `docs/ANTI-SLOP.md` and
   `PRODUCT.md` Voice. UI empty values use ASCII `-`.
+- `docs/SPEC-v39-public-mirror.md` (private, never exported) is the public
+  mirror's law: how `make export-public` scrubs the private repo into
+  `Ian-mccallum/ianOS`, the substitution map, and what must never be tracked.
 - Specs live at the root (`SPEC-LIFE-OS.md`, `SPEC-IPHONE.md`) and in `docs/`
   (`SPEC-v2`…`v14`). `docs/SPEC-v10-osui.md` is mobile UI law;
   `docs/SPEC-v11-journal-delight.md` is Journal; `docs/SPEC-v12-lock-screen.md`

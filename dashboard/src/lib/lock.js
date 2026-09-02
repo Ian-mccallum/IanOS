@@ -8,7 +8,7 @@ const CRED_KEY = 'ianos.lock.cred.v1'
 const SESSION_KEY = 'ianos.lock.session.v1'
 const HIDDEN_AT_KEY = 'ianos.lock.hiddenAt.v1'
 /** Re-lock after this long in the background (ms). Brief switches stay open. */
-export const BG_RELOCK_MS = 90_000
+export const BG_RELOCK_MS = 15 * 60_000
 
 const PASS_PREFIX = 'ianos.lock.v1|'
 /** SHA-256 hex of PASS_PREFIX + the manual unlock secret (see SPEC-v12). */

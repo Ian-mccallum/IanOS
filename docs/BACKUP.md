@@ -58,7 +58,7 @@ On any machine:
 
 ```bash
 brew install restic        # Mac        (Framework: sudo apt install restic)
-git clone https://github.com/ian-mccallum/ianOS && cd ianOS
+git clone https://github.com/Ian-mccallum/ianOS-private && cd ianOS-private
 export RESTIC_REPOSITORY='b2:<bucket-name>:ianos'
 export RESTIC_PASSWORD='<from your password manager / the paper>'
 export B2_ACCOUNT_ID='<keyID>'          # any valid key for the bucket works,

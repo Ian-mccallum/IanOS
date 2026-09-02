@@ -636,6 +636,21 @@ Three edits, by design:
 
 `make plan` then shows it in tonight's dispatch slate.
 
+## Public mirror
+
+This repo is private (`Ian-mccallum/ianOS-private`). A scrubbed mirror with none of
+the private history is published as `Ian-mccallum/ianOS` for anyone who wants to read the
+architecture. It is regenerated, never edited in place:
+
+```bash
+make export-public               # rebuild ../ianOS-public, leak-check it, commit
+cd ../ianOS-public && git push   # publish
+```
+
+The export script and its templates are private and are excluded from the
+mirror; the mirror's own `docs/PUBLIC-MIRROR.md` says what differs. The law
+and the substitution map: `docs/SPEC-v39-public-mirror.md` (private).
+
 ## Layout
 
 ```
@@ -671,6 +686,8 @@ ingest/export_leads.py  leads -> CSV with real call history, for re-enrichment
 scripts/backtest_leads.py  did Fit/Pain/Reach predict who answers? (reports, never rewrites)
 scripts/prep_calls.py   print the next calls + full scripts, to read before dialing
 scripts/make_icons.py   PWA icons + logo lockup from brand sources
+scripts/export_public.py       builds the scrubbed public mirror (private, never exported; SPEC-v39)
+scripts/public_export/         the mirror's templates: public README, sample dossier, CI, screenshots
 leads/                  Clockwork's scraper + enricher + the CSVs (gitignored: real contacts)
 scripts/seed.py         multi-domain demo data (goals, facts, LLC chain deps)
 docs/SPEC-v5-ian-personal-dashboard.md   v5 dashboard spec (shipped)

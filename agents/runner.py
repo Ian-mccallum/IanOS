@@ -2492,6 +2492,23 @@ def _chat_live_state_block(conn) -> str:
     return "\n".join(lines) if lines else "none."
 
 
+async def _single_turn_stream(text: str):
+    """Wrap one user message as the AsyncIterable the SDK requires whenever
+    `ClaudeAgentOptions.can_use_tool` is set: `query(prompt=<str>, ...)` with
+    a `can_use_tool` callback raises `ValueError` at runtime ("can_use_tool
+    callback requires streaming mode"), a real regression that unit tests
+    never caught because they mock `query()` directly rather than exercising
+    the SDK's own permission-mode validation. Every consult turn sets
+    `can_use_tool` (agents/consult_gate.py, Law A2), so every consult turn
+    needs this, not just tool-using ones."""
+    yield {
+        "type": "user",
+        "message": {"role": "user", "content": text},
+        "parent_tool_use_id": None,
+        "session_id": "",
+    }
+
+
 def _chat_user_prompt(
     question: str,
     *,
@@ -2906,7 +2923,7 @@ async def run_chat_turn(
             workflow_line=workflow_line,
             conn=conn,
         )
-        async for message in query(prompt=prompt, options=options):
+        async for message in query(prompt=_single_turn_stream(prompt), options=options):
             if isinstance(message, ResultMessage):
                 result["session_id"] = str(message.session_id or "")
                 result["turns"] = max(0, min(turn_cap, int(message.num_turns or 0)))

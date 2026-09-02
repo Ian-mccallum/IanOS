@@ -167,6 +167,13 @@ permanently unreadable, by design.
   never the full rows, the SPA polls every 15s.
 - **Is it on disk outside the DB?** Add the directory to `.gitignore` AND to
   `scripts/backup.sh` paths in the same commit (D9).
+- **Will it reach the public mirror?** Everything in a private commit is
+  exported to the public `ianOS` repo by `scripts/export_public.py`
+  (SPEC-v39). Real
+  data belongs in gitignored paths (`data/`, `leads/*.csv`, `.env`); a
+  tracked fixture, seed, or spec that quotes a real name, balance, room,
+  or credential needs a substitution rule or an exclusion in that script
+  before it is committed.
 - **Domain semantics**: check D7 before reusing `school`/`college` etc.
 - Update `SCHEMA`, `run_migrations`, the spec (or write one), and CLAUDE.md's
   table list.

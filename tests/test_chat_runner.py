@@ -77,7 +77,11 @@ def test_chat_prompt_has_no_journal_and_escapes_injection(conn, monkeypatch):
     captured = {}
 
     async def fake_query(*, prompt, options):
-        captured["prompt"] = prompt
+        # SPEC-v37 §2.7/Law A2: can_use_tool forces streaming mode, so
+        # run_chat_turn now sends prompt as a one-item AsyncIterable rather
+        # than a bare string (agents/runner.py's _single_turn_stream).
+        messages = [m async for m in prompt]
+        captured["prompt"] = messages[0]["message"]["content"]
         captured["options"] = options
         yield _result(_reply())
 

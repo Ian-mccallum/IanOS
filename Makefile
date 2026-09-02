@@ -168,6 +168,12 @@ sync-load:
 test:
 	$(PY) -m pytest tests/ -q
 
+## Rebuild the scrubbed public mirror in ../ianOS-public and commit it there
+## (SPEC-v39). Push from that directory. The script and its rule table stay private.
+EXPORT_MSG ?= Refresh public mirror
+export-public:
+	$(PY) scripts/export_public.py --dest ../ianOS-public --commit --message "$(EXPORT_MSG)"
+
 ## Encrypted off-site backup (SPEC-v16, docs/BACKUP.md). Needs RESTIC_* in .env.
 backup:
 	bash scripts/backup.sh
