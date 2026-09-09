@@ -16,6 +16,7 @@ import SchoolNotebookPage from './pages/SchoolNotebookPage.jsx'
 import SchoolNotebookBoundary from './components/school-notes/SchoolNotebookBoundary.jsx'
 import { stashSchoolNotebookIntent } from './lib/school-notebook.js'
 import LifePage from './pages/LifePage.jsx'
+import LearningPage from './pages/LearningPage.jsx'
 import CommandPalette, { useCommandPalette } from './components/CommandPalette.jsx'
 import { api, fetchState } from './lib/api.js'
 import { deadLetters, dismissDeadLetter, pendingCount, onQueueChange, queueIssue, startAutoFlush } from './lib/offline.js'
@@ -29,12 +30,13 @@ import { roleColor, roleGlyph } from './lib/agents.js'
 import { attachRelockListeners, isUnlocked, lockNow } from './lib/lock.js'
 import AgentChat from './components/AgentChat.jsx'
 import { draftLabel, draftPlainText, formatProposalDue } from './lib/proposals.js'
+import DayArc from './components/DayArc.jsx'
 
 // 'moneyhistory' is deliberately absent from Nav.jsx's ALL_LINKS/ALL_MOBILE_MORE
 // (SPEC-v24 BUILD 4): it's a detail page reached only by disclosure from
 // AccountSheet's "View all transactions", the same "not in the tab bar keeps
 // its own title" rule this file already applies to every page below.
-const PAGES = ['home', 'plan', 'btc', 'body', 'partner', 'school', 'schoolnotebook', 'life', 'money', 'moneyhistory', 'memory', 'inbox', 'log', 'notes', 'goals', 'journal', 'roster', 'shutdown']
+const PAGES = ['home', 'plan', 'btc', 'body', 'partner', 'school', 'schoolnotebook', 'life', 'learning', 'money', 'moneyhistory', 'memory', 'inbox', 'log', 'notes', 'goals', 'journal', 'roster', 'shutdown']
 // The four pages with a permanent slot in the mobile tab bar (SPEC-v10 §2.1).
 // Keep in step with MOBILE_PRIMARY in components/Nav.jsx.
 const TAB_PAGES = ['home', 'plan', 'btc', 'partner']
@@ -55,10 +57,6 @@ function RoleTag({ role, className = 'role-tag' }) {
       {codename && <span className="role-sub"> · {role}</span>}
     </span>
   )
-}
-const DOMAIN_COLORS = {
-  business: 'var(--good)', finance: 'var(--warn)',
-  health: 'var(--health)', personal: 'var(--personal)',
 }
 const KIND_LABEL = {
   money: 'Money', task: 'Task', legal: 'Legal',
@@ -676,58 +674,54 @@ function AgentMemoFeed({ memos }) {
 
 // --------------------------------------------------------------- header
 
-function Clock() {
-  const [now, setNow] = useState(new Date())
-  useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t) }, [])
-  return <span className="clock">{now.toLocaleTimeString('en-US', { hour12: false })}</span>
-}
-
-function LastAgentRun({ memos }) {
-  if (!memos?.length) return <span className="agent-run-hint">Agents haven&apos;t run yet</span>
-  const latest = memos[0]?.created_at
-  return <span className="agent-run-hint">Agents ran {relTime(latest)}</span>
-}
-
-function FocusChips({ domains }) {
-  if (!domains?.length) return null
-  const labels = {
-    business: 'Beat the Clock', health: 'Body', personal: 'Life', finance: 'Money', school: 'School',
-  }
-  const colors = {
-    business: DOMAIN_COLORS.business, health: DOMAIN_COLORS.health,
-    personal: DOMAIN_COLORS.personal, finance: DOMAIN_COLORS.finance, school: '#8b9cff',
-  }
-  return (
-    <div className="focus-chips">
-      {domains.map((d) => (
-        <span key={d} className="focus-chip"
-              style={{ borderColor: colors[d] || DOMAIN_COLORS.business, color: colors[d] || DOMAIN_COLORS.business }}>
-          {labels[d] || cap(d)}
-        </span>
-      ))}
-    </div>
-  )
-}
-
 const PAGE_TITLES = {
-  home: ['Command', 'Your day at a glance'],
-  plan: ['Plan', 'Your day, one block at a time'],
-  shutdown: ['Journal', 'Close the day'],
-  journal: ['Journal', 'Only you can read this'],
-  btc: ['Beat the Clock', 'Customers, quotas, and Clockwork ops'],
-  body: ['Body', 'Gym streak and health goals'],
-  partner: ['Partner', 'Things to do for your girlfriend'],
-  school: ['School', 'UIUC deadlines and move-in'],
-  schoolnotebook: ['Class notes', 'One note for each real class session'],
-  life: ['Life', 'Personal admin and everything else'],
-  money: ['Money', 'Portfolio, checking, and burn'],
-  moneyhistory: ['Transaction history', 'Every transaction, filtered'],
-  memory: ['Memory', 'What the agents remember for you'],
-  inbox: ['Inbox', 'Approve or reject agent proposals'],
-  log: ['Log', 'Quick capture for calls and wellness'],
-  notes: ['Notes', 'Yours. The agents can read them.'],
-  roster: ['Roster', 'Who works for you, and how often you agree'],
-  goals: ['Beat the Clock', 'Customers, quotas, and Clockwork ops'],
+  home: 'Command',
+  plan: 'Plan',
+  shutdown: 'Journal',
+  journal: 'Journal',
+  btc: 'Beat the Clock',
+  body: 'Body',
+  partner: 'Partner',
+  school: 'School',
+  schoolnotebook: 'Class notes',
+  life: 'Life',
+  learning: 'Learning',
+  money: 'Money',
+  moneyhistory: 'Transaction history',
+  memory: 'Memory',
+  inbox: 'Inbox',
+  log: 'Log',
+  notes: 'Notes',
+  roster: 'Roster',
+  goals: 'Beat the Clock',
+}
+
+// SPEC-v41 §4.5: the Command tab's icon exists twice in the DOM at once (the
+// desktop rail and the mobile bar, each hidden by CSS on the other's
+// breakpoint, never unmounted), so a bare querySelector can land on the
+// hidden copy and return a zero-size rect. Take the first copy that's
+// actually laid out.
+function navCommandIconRect() {
+  const nodes = document.querySelectorAll('[data-nav-id="home"]')
+  for (const node of nodes) {
+    const rect = node.getBoundingClientRect()
+    if (rect.width > 0 && rect.height > 0) return rect
+  }
+  return nodes[0]?.getBoundingClientRect() || { left: 0, top: 0, width: 0, height: 0 }
+}
+
+function FlyingDot({ from, to, onDone }) {
+  const start = { left: from.left + from.width / 2, top: from.top + from.height / 2 }
+  const end = { left: to.left + to.width / 2, top: to.top + to.height / 2 }
+  return (
+    <motion.span
+      className="priority-fly-dot"
+      initial={start}
+      animate={end}
+      transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+      onAnimationComplete={onDone}
+    />
+  )
 }
 
 function usePage() {
@@ -799,6 +793,11 @@ export default function App() {
   // sessionStorage + read-on-page-change convention as journalFocus above,
   // written by AccountSheet's "View all transactions" (SPEC-v24 BUILD 4).
   const [historyAccountKey, setHistoryAccountKey] = useState(null)
+  // SPEC-v41 §4.5: Life's priority toggle sends a dot flying to the Command
+  // tab icon. Lifted here because the choreography spans Life's TodayPanel
+  // and the fixed Nav bar, two components with no shared parent closer than this.
+  const [flyingDot, setFlyingDot] = useState(null)
+  const onFlyPriorityDot = useCallback((fromRect) => setFlyingDot(fromRect), [])
   // SPEC-v37 §7.1-7.3: the unified replacement for the old Ask sheet, inspect
   // mode, and rooms (all deleted). AgentChat keeps its one mount in App.jsx
   // (Law A10 -- position is a portal, lifecycle is a mount) and owns its own
@@ -972,13 +971,6 @@ export default function App() {
     } catch (e) { toast(e.message, 'crit') }
   }, [refresh, toast])
 
-  const daysToClient = useMemo(() => {
-    if (!state?.goals) return null
-    const g = state.goals.find((x) => x.hero && x.domain === 'business')
-      || state.goals.find((x) => x.name.startsWith('Sign Clockwork'))
-    return g?.days_remaining ?? null
-  }, [state])
-
   // CommandPage's own memo guard checks `prev.roster === next.roster` by
   // reference, so this needs a stable identity across polls, not just a
   // useMemo keyed on state.roster: fetchState() hands back a freshly
@@ -1018,13 +1010,10 @@ export default function App() {
   }
 
   const briefIsToday = state.brief && state.brief.governs_date === state.today
-  const [title, defaultSubtitle] = PAGE_TITLES[page] || PAGE_TITLES.home
+  const title = PAGE_TITLES[page] || PAGE_TITLES.home
   const partnerOpen = Number.isInteger(state.partner_summary?.open_count)
     ? state.partner_summary.open_count
     : 0
-  const subtitle = page === 'partner'
-    ? `${partnerOpen} open ${partnerOpen === 1 ? 'thing' : 'things'} for Partner`
-    : defaultSubtitle
   // Red badge is earned, not default: a P3 memo today or a live deadline <7d.
   const urgent = (state.memos || []).some((m) => (m.priority ?? 1) >= 3 && dayLabel(m.created_at) === 'Today')
     || (state.goals || []).some((g) => g.kind === 'deadline' && g.days_remaining != null
@@ -1053,20 +1042,11 @@ export default function App() {
             (SPEC-v10 L3), the lit tab already says where you are. Pages that
             live behind "More" keep their title, because nothing else names them. */}
         {page !== 'schoolnotebook' && <header className={`page-header${TAB_PAGES.includes(page) ? ' page-header-quiet' : ''}`}>
-          <div>
+          <div className="page-title-row">
             <h1 className="page-title">{title}</h1>
-            <p className="page-sub">{subtitle}</p>
+            {page === 'partner' && partnerOpen > 0 && <span className="partner-open-chip">{partnerOpen} open</span>}
           </div>
-          <div className="page-meta">
-            <span className={`sys-dot ${offline || stale ? 'dot-warn' : 'dot-good'}`} />
-            <span>{offline ? 'Offline' : stale ? 'Cached' : 'Live'}</span>
-            <LastAgentRun memos={state.memos} />
-            <FocusChips domains={state.focus?.domains} />
-            {daysToClient != null && (
-              <span className="countdown">{daysToClient}d to client</span>
-            )}
-            <Clock />
-          </div>
+          <DayArc header={state.header} onOpenPlan={() => navigate('plan')} onOpenRoster={() => navigate('roster')} />
         </header>}
 
         {/* Mac asleep: say so plainly rather than showing stale data as live. */}
@@ -1168,7 +1148,10 @@ export default function App() {
               </SchoolNotebookBoundary>
             )}
             {page === 'life' && (
-              <LifePage state={state} refresh={refresh} toast={toast} />
+              <LifePage state={state} refresh={refresh} toast={toast} onFlyPriorityDot={onFlyPriorityDot} />
+            )}
+            {page === 'learning' && (
+              <LearningPage state={state} refresh={refresh} toast={toast} requestConsult={requestConsult} />
             )}
             {page === 'goals' && (
               <BeatTheClockPage state={state} refresh={refresh} toast={toast}
@@ -1215,6 +1198,10 @@ export default function App() {
           </motion.div>
       </main>
     </div>
+
+    {flyingDot && (
+      <FlyingDot from={flyingDot} to={navCommandIconRect()} onDone={() => setFlyingDot(null)} />
+    )}
 
     <CommandPalette
       open={paletteOpen}

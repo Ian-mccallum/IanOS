@@ -4,10 +4,22 @@
 <dict>
     <key>Label</key>
     <string>com.ianos.backup</string>
+    <!-- Launched through the venv python, not /bin/bash directly.
+         The repo lives under ~/Desktop, which macOS protects with TCC. A
+         LaunchAgent whose program is /bin/bash has no access there, so every
+         scheduled run died with "Operation not permitted" before the script's
+         own ERR trap could fire, which is why it failed silently from
+         2026-08-11 to 2026-09-09. .venv/bin/python does have access (it is
+         why every other ianOS agent works), and TCC responsibility survives
+         an exec, so bash inherits it and the engine below is unchanged.
+         The engine stays bash + restic + sqlite3 (SPEC-v16): this is a macOS
+         launcher, not part of it, and the systemd unit on Linux calls
+         scripts/backup.sh directly with no such shim. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>__IANOS_DIR__/scripts/backup.sh</string>
+        <string>__IANOS_DIR__/.venv/bin/python</string>
+        <string>-c</string>
+        <string>import os; os.execv('/bin/bash', ['bash', '__IANOS_DIR__/scripts/backup.sh'])</string>
     </array>
     <key>WorkingDirectory</key>
     <string>__IANOS_DIR__</string>

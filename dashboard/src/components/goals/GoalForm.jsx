@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../../lib/api.js'
+import { METRIC_OPTIONS } from '../../lib/metricOptions.js'
 
 const EMPTY_GOAL = {
   name: '', kind: 'goal', domain: 'business', target: '', unit: '',
@@ -11,7 +12,7 @@ function cap(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s
 }
 
-export default function GoalForm({ initial, onSaved, onCancel, onDeleted, toast, defaultDomain, allGoals = [] }) {
+export default function GoalForm({ initial, onSaved, onCancel, onDeleted, toast, defaultDomain, allGoals = [], pillar }) {
   const editing = Boolean(initial?.id)
   const [g, setG] = useState({
     ...EMPTY_GOAL, ...initial,
@@ -88,7 +89,11 @@ export default function GoalForm({ initial, onSaved, onCancel, onDeleted, toast,
           </div>
           <label className="gf-field gf-grow">
             <span>Track automatically</span>
-            <input value={g.metric_key} onChange={set('metric_key')} placeholder="clients_signed" />
+            <select value={g.metric_key} onChange={set('metric_key')}>
+              {(METRIC_OPTIONS[pillar] || [{ value: '', label: 'Manual' }]).map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
           </label>
         </div>
         <label className="gf-field gf-grow"><span>Notes</span>

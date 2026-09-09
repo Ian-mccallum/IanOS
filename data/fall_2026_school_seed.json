@@ -234,35 +234,76 @@
           "label": "Course orientation (extra credit)",
           "date": "2026-08-27",
           "time_local": "23:55",
-          "points": 10
-        },
-        {
-          "label": "Week 1 lecture",
-          "date": "2026-08-30",
-          "time_local": "23:55",
-          "points": 15
-        },
-        {
-          "label": "Week 1 discussion",
-          "date": "2026-08-30",
-          "time_local": "23:55",
-          "points": 15
-        },
-        {
-          "label": "Week 1 quiz",
-          "date": "2026-08-30",
-          "time_local": "23:55",
-          "points": 30
+          "points": 10,
+          "id": "milestone-0"
         },
         {
           "label": "Week 1 application activity",
           "date": "2026-08-30",
           "time_local": "23:55",
+          "points": 30,
+          "id": "milestone-4"
+        },
+        {
+          "label": "Week 1 discussion",
+          "date": "2026-08-30",
+          "time_local": "23:55",
+          "points": 15,
+          "id": "milestone-2"
+        },
+        {
+          "label": "Week 1 lecture",
+          "date": "2026-08-30",
+          "time_local": "23:55",
+          "points": 15,
+          "id": "milestone-1"
+        },
+        {
+          "label": "Week 1 quiz",
+          "date": "2026-08-30",
+          "time_local": "23:55",
+          "points": 30,
+          "id": "milestone-3"
+        },
+        {
+          "id": "week-3-lecture",
+          "label": "Week 3 lecture",
+          "date": "2026-09-10",
+          "time_local": "23:55",
+          "points": 15
+        },
+        {
+          "id": "week-3-activity-1",
+          "label": "Week 3 activity part 1",
+          "date": "2026-09-13",
+          "time_local": "23:55",
+          "points": 20
+        },
+        {
+          "id": "week-3-activity-2",
+          "label": "Week 3 activity part 2",
+          "date": "2026-09-13",
+          "time_local": "23:55",
+          "points": 20
+        },
+        {
+          "id": "week-3-discussion",
+          "label": "Week 3 discussion samples",
+          "date": "2026-09-13",
+          "time_local": "23:55",
+          "points": 15
+        },
+        {
+          "id": "week-3-quiz",
+          "label": "Week 3 quiz",
+          "date": "2026-09-13",
+          "time_local": "23:55",
           "points": 30
         },
         {
           "label": "Course concludes",
-          "date": "2026-10-16"
+          "date": "2026-10-16",
+          "id": "milestone-5"
         }
       ],
       "source_kind": "sample"

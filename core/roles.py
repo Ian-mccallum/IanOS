@@ -31,8 +31,8 @@ ROLES_DIR = ROOT / "agents" / "roles"
 # two have no successor. Retired roles stay loadable (all_roles() appends any
 # .md file not in SEQUENCE) so their history keeps rendering on the Roster.
 SEQUENCE = [
-    "scout", "cfo", "wealth", "physician", "coach",
-    "steward", "lovebird", "watchdog", "counsel", "chief",
+    "scout", "cfo", "wealth", "physician", "coach", "steward",
+    "lovebird", "watchdog", "tutor", "counsel", "chief",
 ]
 
 VALID_FACT_DOMAINS = {

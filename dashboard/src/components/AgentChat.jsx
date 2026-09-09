@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { api } from '../lib/api.js'
 import { roleColor, roleGlyph } from '../lib/agents.js'
 import { draftLabel, draftPlainText } from '../lib/proposals.js'
+import { relTime } from '../lib/time.js'
 import Md from './Md.jsx'
 import Sheet from './Sheet.jsx'
 
@@ -42,13 +43,15 @@ const EFFORTS = [
   { id: 'max', label: 'Max', hint: 'slowest' },
 ]
 
-// SPEC-v37 §7.1-7.2: the consult surface leaves the shell overlay and becomes
-// part of Command, but the mount stays in App.jsx (Law A10). Three view
-// states, held in sessionStorage (never a route, never localStorage: this is
-// a per-tab UI position, not a durable preference), so a reload lands back
-// wherever Ian left it with the thread intact.
+// SPEC-v37 §7.1: the consult surface lives in Command, but the mount stays in
+// App.jsx (Law A10). SPEC-v40 §2.1 cut the view states to two, dock / open,
+// held in sessionStorage (never a route, never localStorage: this is a
+// per-tab UI position, not a durable preference), so a reload lands back
+// wherever Ian left it with the thread intact. The retired 'expanded' and
+// 'fullscreen' values read as 'open'.
 const CONSULT_VIEW_KEY = 'ianos:consult-view'
-const VALID_VIEWS = new Set(['dock', 'expanded', 'fullscreen'])
+const VALID_VIEWS = new Set(['dock', 'open'])
+const LEGACY_OPEN_VIEWS = new Set(['expanded', 'fullscreen'])
 const DOCK_SLOT_ID = 'consult-dock-slot'
 // Matches the app's one mobile/desktop breakpoint (styles.css uses this exact
 // pair everywhere else); Sheet.jsx hardcodes the same number for its own
@@ -58,6 +61,7 @@ const MOBILE_QUERY = '(max-width: 900px)'
 function readConsultView() {
   try {
     const raw = sessionStorage.getItem(CONSULT_VIEW_KEY)
+    if (LEGACY_OPEN_VIEWS.has(raw)) return 'open'
     return VALID_VIEWS.has(raw) ? raw : 'dock'
   } catch {
     return 'dock'
@@ -167,6 +171,34 @@ export function clearActiveChatTurn(id) {
   } catch {
     return false
   }
+}
+/** SPEC-v40 §2.3 / §4: split a thread's turns at its last Compact. `earlier`
+ *  is what the stored summary already covers (collapsed behind "Show
+ *  earlier"), `recent` is everything since. Pure; exported for its test. */
+export function partitionCompacted(turns, summaryTurnCount) {
+  const list = Array.isArray(turns) ? turns : []
+  const n = Math.max(0, Math.min(list.length, Number(summaryTurnCount) || 0))
+  return { earlier: list.slice(0, n), recent: list.slice(n) }
+}
+
+/** SPEC-v40 §5: threads grouped under their agent in roster order, newest
+ *  first inside each group (the API already lists newest activity first).
+ *  Agents with no thread still get a row, so "New chat" exists for them. */
+export function groupThreadsByRole(threads, roster) {
+  const byRole = new Map()
+  for (const t of Array.isArray(threads) ? threads : []) {
+    if (!t?.role) continue
+    if (!byRole.has(t.role)) byRole.set(t.role, [])
+    byRole.get(t.role).push(t)
+  }
+  const out = []
+  const seen = new Set()
+  for (const item of Array.isArray(roster) ? roster : []) {
+    if (!item?.role || item.active === false || seen.has(item.role)) continue
+    seen.add(item.role)
+    out.push({ role: item.role, codename: item.codename || item.role, threads: byRole.get(item.role) || [] })
+  }
+  return out
 }
 // ---------------------------------------------------------------------------
 
@@ -400,18 +432,14 @@ function ContextSheet({ chips, granted, wanted, accent, anchor, onToggle, onClos
   )
 }
 
-/** Who answers, with what, and how hard: one decision, one sheet. */
+/** With what, and how hard: model, effort, capability, specialists. Who
+ *  answers moved to ThreadsSheet (SPEC-v40 §5). */
 function ReasoningSheet({
-  roster, threads, current, model, effort, running,
+  model, effort, running,
   askSpecialists, specialistRoles, specialistRoster, accent,
   grantedCapabilities, onToggleCapability,
-  onPickAgent, onPickModel, onPickEffort, onToggleSpecialists, onToggleRole, onClose,
+  onPickModel, onPickEffort, onToggleSpecialists, onToggleRole, onClose,
 }) {
-  const byRole = useMemo(() => {
-    const map = new Map()
-    for (const t of threads || []) map.set(t.role, t)
-    return map
-  }, [threads])
   return (
     <Sheet open onClose={onClose} title="Reasoning" variant="dialog">
       <div style={{ '--agent': accent }}>
@@ -472,30 +500,6 @@ function ReasoningSheet({
           })}
         </div>
 
-        <h3 className="ac-group-label">Agent</h3>
-        <ul className="ac-agent-list">
-          {roster.map((item) => {
-            const existing = byRole.get(item.role)
-            const isCurrent = item.role === current
-            return (
-              <li key={item.role}>
-                <button
-                  type="button"
-                  className={`ac-agent-row${isCurrent ? ' is-current' : ''}`}
-                  style={{ '--agent': chatRoleColor(item.role) }}
-                  onClick={() => onPickAgent(item.role)}
-                >
-                  <Glyph role={item.role} />
-                  <span className="ac-agent-name">{item.codename || item.role}</span>
-                  <span className="ac-agent-meta">
-                    {isCurrent ? 'open' : existing ? 'continue' : 'new'}
-                  </span>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-
         <h3 className="ac-group-label">Consult specialists</h3>
         <div className="ac-option-group" role="group" aria-label="Specialists">
           <button
@@ -526,11 +530,107 @@ function ReasoningSheet({
   )
 }
 
-/** The small re-entry affordance shown when the dock's view is 'dock' but
- *  Command isn't the active page: no portal target exists there to hold the
- *  full composer, and floating a full composer over every other page would
- *  be an osui L2/L3 violation (a second job on someone else's screen). This
- *  is deliberately the only thing rendered in that situation. */
+const THREADS_PER_AGENT = 5
+
+/** SPEC-v40 §5: every agent, its threads under it, New chat per agent.
+ *  Rows are 44px. Tapping a thread loads it (reopening if archived). */
+function ThreadsSheet({ roster, threads, currentThreadId, accent, onOpenThread, onNewThread, onClose }) {
+  const groups = useMemo(() => groupThreadsByRole(threads, roster), [threads, roster])
+  const [expanded, setExpanded] = useState(() => new Set())
+  return (
+    <Sheet open onClose={onClose} title="Threads" variant="dialog">
+      <div style={{ '--agent': accent }}>
+        {groups.map((group) => {
+          const showAll = expanded.has(group.role)
+          const shown = showAll ? group.threads : group.threads.slice(0, THREADS_PER_AGENT)
+          const hidden = group.threads.length - shown.length
+          return (
+            <section key={group.role} className="ac-thread-group" style={{ '--agent': chatRoleColor(group.role) }}>
+              <div className="ac-thread-agent">
+                <Glyph role={group.role} />
+                <span className="ac-thread-agent-name">{group.codename}</span>
+                <button type="button" className="ac-thread-new" onClick={() => onNewThread(group.role)}>
+                  New chat
+                </button>
+              </div>
+              {shown.length > 0 && (
+                <ul className="ac-thread-list">
+                  {shown.map((t) => {
+                    const isCurrent = t.id === currentThreadId
+                    const tags = []
+                    if (t.has_summary) tags.push('compacted')
+                    if (t.status === 'CLOSED') tags.push('archived')
+                    return (
+                      <li key={t.id}>
+                        <button
+                          type="button"
+                          className={`ac-thread-row${isCurrent ? ' is-current' : ''}`}
+                          onClick={() => onOpenThread(t)}
+                          aria-current={isCurrent ? 'true' : undefined}
+                        >
+                          <span className="ac-thread-title">{t.title || 'New chat'}</span>
+                          <span className="ac-thread-meta">
+                            {relTime(t.updated_at)}
+                            {t.turn_count > 0 ? ` · ${t.turn_count} ${t.turn_count === 1 ? 'turn' : 'turns'}` : ''}
+                            {tags.length ? ` · ${tags.join(' · ')}` : ''}
+                          </span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+              {hidden > 0 && (
+                <button
+                  type="button"
+                  className="ac-thread-more"
+                  onClick={() => setExpanded((cur) => new Set(cur).add(group.role))}
+                >
+                  {hidden} older
+                </button>
+              )}
+            </section>
+          )
+        })}
+      </div>
+    </Sheet>
+  )
+}
+
+/** The thread's own menu: Compact, Archive, New chat. Compact is disabled
+ *  (with the reason) below the server's minimum; the server enforces it
+ *  again. */
+function ThreadMenuSheet({
+  codename, accent, anchor, compactable, compactReason, busy,
+  onCompact, onArchive, onNewThread, onClose,
+}) {
+  return (
+    <Sheet open onClose={onClose} title="This thread" variant="popover" anchor={anchor}>
+      <div className="ac-thread-menu" style={{ '--agent': accent }}>
+        <button type="button" className="ac-thread-menu-row" onClick={onCompact} disabled={!compactable || busy}>
+          <span>{busy ? 'Compacting…' : 'Compact this thread'}</span>
+          <span className="ac-thread-menu-hint">
+            {compactable ? 'Summarize it and start the model fresh. Nothing is deleted.' : compactReason}
+          </span>
+        </button>
+        <button type="button" className="ac-thread-menu-row" onClick={onNewThread} disabled={busy}>
+          <span>New chat with {codename}</span>
+          <span className="ac-thread-menu-hint">This one stays in Threads.</span>
+        </button>
+        <button type="button" className="ac-thread-menu-row" onClick={onArchive} disabled={busy}>
+          <span>Archive</span>
+          <span className="ac-thread-menu-hint">Reopen it any time from Threads.</span>
+        </button>
+      </div>
+    </Sheet>
+  )
+}
+
+/** The small re-entry affordance shown when the view is 'dock' but Command
+ *  isn't the active page: no portal target exists there, and floating a
+ *  composer over every other page would be an osui L2/L3 violation (a second
+ *  job on someone else's screen). CSS hides it under the committed modes
+ *  (call, journal, shutdown, any open sheet, note editing). */
 function DockPill({ role, codename, running, onExpand }) {
   return createPortal(
     <div className="consult-fixed">
@@ -549,10 +649,44 @@ function DockPill({ role, codename, running, onExpand }) {
   )
 }
 
-function FixedPanel({ wide, children }) {
-  return createPortal(
-    <div className={`consult-fixed${wide ? ' consult-fixed--expanded' : ''}`}>{children}</div>,
-    document.body,
+/** First line of the last thing the agent said, for the mobile dock row. */
+function lastReplyLine(turns) {
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    const t = turns[i]
+    if (t?.status !== 'SUCCEEDED') continue
+    const line = String(t.verdict && t.verdict !== '-' ? t.verdict : t.body || '')
+      .split('\n').map((s) => s.trim()).find(Boolean) || ''
+    return line.replace(/[*_`#>]/g, '').slice(0, 120)
+  }
+  return ''
+}
+
+/** SPEC-v40 §2.1, mobile dock: one 44px row under the Order. No composer,
+ *  no scroller, so Command keeps a single scroller; tapping opens the
+ *  conversation and focuses the composer in the same gesture. */
+function DockRow({ role, codename, turns, running, onOpen }) {
+  const line = lastReplyLine(turns)
+  return (
+    <button
+      type="button"
+      className="consult-dock-row"
+      style={{ '--agent': chatRoleColor(role) }}
+      onClick={onOpen}
+      aria-label={`Open chat with ${codename}`}
+    >
+      <Glyph role={role} />
+      <span className="consult-dock-row-text">
+        <span className="consult-dock-row-name">{codename}</span>
+        {running ? (
+          <span className="consult-dock-row-line ac-thinking" aria-live="polite">
+            <span className="ac-dots" aria-hidden="true"><span /><span /><span /></span>
+          </span>
+        ) : (
+          <span className="consult-dock-row-line">{line || `Ask ${shortName(codename)}`}</span>
+        )}
+      </span>
+      <span className="consult-dock-row-chevron" aria-hidden="true">›</span>
+    </button>
   )
 }
 
@@ -566,7 +700,13 @@ export default function AgentChat({
   // agent's thread, seeds the composer without sending, and switches view.
   page, consultRequest, onConsultRequestHandled,
 }) {
-  const streamRef = useRef(null)
+  // Set by whatever opens the conversation on purpose (dock row tap, Ask an
+  // agent, Roster, Inspect); consumed by the focus layout effect below.
+  const wantFocus = useRef(false)
+  // The pill on non-Command pages is a re-entry affordance, not an
+  // advertisement: it renders only once the conversation has been opened
+  // this session (or a turn is running), see SPEC-v40 §2.5.
+  const openedThisSession = useRef(false)
   const [thread, setThread] = useState(null)
   const [threads, setThreads] = useState([])
   const [chips, setChips] = useState([])
@@ -578,6 +718,12 @@ export default function AgentChat({
   const [filing, setFiling] = useState(false)
   const [showContext, setShowContext] = useState(false)
   const [showReasoning, setShowReasoning] = useState(false)
+  // SPEC-v40 §5: the Threads sheet (who + which thread) and the thread menu.
+  const [showThreads, setShowThreads] = useState(false)
+  const [showThreadMenu, setShowThreadMenu] = useState(false)
+  const [showEarlier, setShowEarlier] = useState(false)
+  const [compacting, setCompacting] = useState(false)
+  const menuTriggerRef = useRef(null)
   const [refreshMoney, setRefreshMoney] = useState(false)
   const [askSpecialists, setAskSpecialists] = useState(false)
   const [specialistRoles, setSpecialistRoles] = useState([])
@@ -615,7 +761,11 @@ export default function AgentChat({
     node.style.height = `${node.scrollHeight}px`
   }, [])
   const pollStartedAt = useRef(Date.now())
-  const activeTurnId = useRef(null)
+  // The turn being polled is STATE, not a ref: the poll effect must re-arm
+  // whenever it changes, including the mount-time resume path, which used to
+  // set a ref after the effect had already run and so never started a timer
+  // (dots forever after a reload mid-turn).
+  const [pollTurnId, setPollTurnId] = useState(null)
 
   const fullRoster = useMemo(
     () => (Array.isArray(roster) ? roster : []).filter((r) => r?.role && r.active !== false),
@@ -691,17 +841,19 @@ export default function AgentChat({
     return detail
   }, [])
 
+  // SPEC-v40 §3: every thread, every status, newest activity first. The
+  // Threads sheet shows archived ones too (they reopen with a tap).
   const listThreads = useCallback(async () => {
     const listed = await api('/api/chat/threads', 'GET', undefined, { cache: 'no-store' })
-    const open = (listed.threads || []).filter((t) => t.status === 'OPEN')
-    setThreads(open)
-    return open
+    const all = listed.threads || []
+    setThreads(all)
+    return all
   }, [])
 
-  // One open thread per agent, so "which thread" is answered by "which agent".
+  // An agent's current thread is its newest OPEN one; none means a new one.
   const openFor = useCallback(async (wanted) => {
-    const open = await listThreads()
-    const existing = open.find((t) => t.role === wanted)
+    const all = await listThreads()
+    const existing = all.find((t) => t.role === wanted && t.status === 'OPEN')
     if (existing) return loadThread(existing.id)
     const created = await api('/api/chat/threads', 'POST', { role: wanted })
     await listThreads()
@@ -726,8 +878,8 @@ export default function AgentChat({
       if (!stored) return
       const found = (detail?.turns || []).find((t) => t.id === stored)
       if (found && isActiveInvocation(found.status)) {
-        activeTurnId.current = stored
         pollStartedAt.current = Date.now()
+        setPollTurnId(stored)
       } else {
         clearActiveChatTurn(stored)
         if (!found) setExpired('That turn expired. Ask again.')
@@ -759,7 +911,8 @@ export default function AgentChat({
       }
       if (cancelled) return
       if (consultRequest.seedText) setQuestion(consultRequest.seedText)
-      setView(consultRequest.view || 'expanded')
+      wantFocus.current = true
+      setView('open')
       onConsultRequestHandled?.()
     }
     run()
@@ -767,45 +920,64 @@ export default function AgentChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [consultRequest])
 
+  // Poll the THREAD, not a per-invocation route: /api/agent-invocations/{id}
+  // was deleted by SPEC-v37 §7.3 and this loop kept calling it, so every tick
+  // threw before the thread refresh and the "thinking" dots never cleared
+  // until a manual reload. The thread detail is the one shape the page load
+  // already renders, so polling and reloading can no longer disagree.
   useEffect(() => {
-    const id = activeTurnId.current
+    const id = pollTurnId
     if (!id || !thread?.id) return undefined
+    const threadId = thread.id
     let cancelled = false
     let timer = 0
+    const finish = () => {
+      clearActiveChatTurn(id)
+      setPollTurnId((current) => (current === id ? null : current))
+      // An auto-Compact may have landed with this turn (SPEC-v40 §4.3).
+      listThreads().catch(() => {})
+    }
     const tick = async () => {
       try {
-        const turn = await api(`/api/agent-invocations/${id}`, 'GET', undefined, { cache: 'no-store' })
+        const detail = await loadThread(threadId)
         if (cancelled) return
-        await loadThread(thread.id)
-        if (isTerminalInvocation(turn.status)) {
-          clearActiveChatTurn(id)
-          activeTurnId.current = null
+        const turn = (detail?.turns || []).find((t) => t.id === id)
+        if (!turn) {
+          finish()
+          setExpired('That turn expired. Ask again.')
           return
         }
-        timer = window.setTimeout(tick, invocationPollDelay(Date.now() - pollStartedAt.current))
+        if (isTerminalInvocation(turn.status)) {
+          finish()
+          return
+        }
       } catch (error) {
         if (cancelled) return
-        if ((error.message || '').includes('404')) {
-          clearActiveChatTurn(id)
-          setExpired('That turn expired. Ask again.')
-          activeTurnId.current = null
-          return
-        }
         if (/offline/i.test(error.message || '')) setOffline(true)
-        timer = window.setTimeout(tick, invocationPollDelay(Date.now() - pollStartedAt.current))
       }
+      timer = window.setTimeout(tick, invocationPollDelay(Date.now() - pollStartedAt.current))
     }
     timer = window.setTimeout(tick, invocationPollDelay(0))
     return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [thread?.id, thread?.turns?.length, loadThread])
+    // thread.id is read once at arm time on purpose: an agent switch clears
+    // pollTurnId itself (pickAgent), so the loop must not chase a new thread.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pollTurnId, loadThread, listThreads])
 
   useEffect(() => { autoGrow() }, [question, codename, view, autoGrow])
 
-  // Newest at the bottom, like every conversation surface Ian already uses.
-  useEffect(() => {
-    const node = streamRef.current
-    if (node) node.scrollTop = node.scrollHeight
-  }, [turns.length, running])
+  // Newest at the bottom with no JS: the stream is a column-reverse flex
+  // column (SPEC-v40 §2.2), so a reply landing, a poll refresh, or opening
+  // the surface never jumps the scroll position.
+
+  // Opening the conversation focuses the composer inside the same gesture
+  // (a layout effect runs before paint, still within the tap's task, which
+  // is what iOS requires to raise the keyboard).
+  useLayoutEffect(() => {
+    if (view !== 'open' || !wantFocus.current) return
+    wantFocus.current = false
+    fieldRef.current?.focus?.()
+  }, [view])
 
   // SPEC-v27: the source list is filtered by what THIS agent can be granted,
   // so it has to follow the thread rather than being fetched once.
@@ -817,20 +989,6 @@ export default function AgentChat({
       .catch(() => { /* the composer still works without the list */ })
     return () => { cancelled = true }
   }, [thread?.role])
-
-  // Escape steps the desktop inline-grown expanded panel back to dock (the
-  // Sheet-based mobile expanded / any fullscreen already get Escape for free
-  // from Sheet.jsx). Skipped while a nested sheet (Context/Reasoning/File) is
-  // open, so Escape closes the topmost thing once, not both at once.
-  useEffect(() => {
-    if (view !== 'expanded' || isMobile) return undefined
-    if (showContext || showReasoning || fileDraft) return undefined
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') setView('dock')
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [view, isMobile, showContext, showReasoning, fileDraft])
 
   async function patchThread(body) {
     if (!thread?.id) return
@@ -850,13 +1008,81 @@ export default function AgentChat({
     }
   }
 
-  async function pickAgent(wanted) {
-    if (wanted === role) return
+  // ---- SPEC-v40 §5: thread actions ---------------------------------------
+  // (Agent switching is a thread choice now; the Threads sheet replaces the
+  // old pickAgent. A turn still running on the previous thread finishes on
+  // its own, so every switch below clears pollTurnId first rather than
+  // polling the old turn against the new thread.)
+  async function openThread(item) {
+    if (!item?.id) return
+    setShowThreads(false)
+    if (item.id === thread?.id) return
     try {
       setExpired('')
-      await openFor(wanted)
+      setShowEarlier(false)
+      setPollTurnId(null)
+      if (item.status === 'CLOSED') {
+        await api(`/api/chat/threads/${item.id}`, 'PATCH', { status: 'OPEN' })
+      }
+      await loadThread(item.id)
+      listThreads().catch(() => {})
     } catch (error) {
       toast?.(error.message, 'warn')
+    }
+  }
+
+  async function newThread(wanted = role) {
+    setShowThreads(false)
+    setShowThreadMenu(false)
+    try {
+      setExpired('')
+      setShowEarlier(false)
+      setPollTurnId(null)
+      const created = await api('/api/chat/threads', 'POST', { role: wanted })
+      await loadThread(created.id)
+      listThreads().catch(() => {})
+    } catch (error) {
+      toast?.(error.message, 'warn')
+    }
+  }
+
+  async function archiveThread() {
+    if (!thread?.id) return
+    setShowThreadMenu(false)
+    const archivedRole = role
+    try {
+      await api(`/api/chat/threads/${thread.id}`, 'PATCH', { status: 'CLOSED' })
+      toast?.('Archived. Find it under Threads.', 'good')
+      await openFor(archivedRole)
+    } catch (error) {
+      toast?.(error.message, 'warn')
+    }
+  }
+
+  // Succeeded turns since the last Compact: the same count the server gates
+  // on, so the menu can say why Compact is greyed rather than 409ing later.
+  const { earlier: earlierTurns, recent: recentTurns } = partitionCompacted(turns, thread?.summary_turn_count)
+  const compactableTurns = recentTurns.filter((t) => t.status === 'SUCCEEDED').length
+  const COMPACT_MIN = 4
+  const compactable = compactableTurns >= COMPACT_MIN && !running
+  const compactReason = running
+    ? 'Wait for the reply first.'
+    : `Needs ${COMPACT_MIN} answered turns since the last one (${compactableTurns} so far).`
+
+  async function compactThread() {
+    if (!thread?.id || !compactable) return
+    setCompacting(true)
+    try {
+      await api(`/api/chat/threads/${thread.id}/compact`, 'POST', {})
+      await loadThread(thread.id)
+      listThreads().catch(() => {})
+      setShowThreadMenu(false)
+      setShowEarlier(false)
+      toast?.('Compacted. The thread starts fresh from its summary.', 'good')
+    } catch (error) {
+      toast?.(error.message, 'warn')
+    } finally {
+      setCompacting(false)
     }
   }
 
@@ -910,11 +1136,13 @@ export default function AgentChat({
     try {
       const created = await api(`/api/chat/threads/${thread.id}/turns`, 'POST', payload)
       rememberActiveChatTurn(created.id)
-      activeTurnId.current = created.id
       pollStartedAt.current = Date.now()
       setQuestion('')
       setRefreshMoney(false)
       await loadThread(thread.id)
+      setPollTurnId(created.id)
+      // The first question titles the thread (SPEC-v40 §3.2).
+      listThreads().catch(() => {})
     } catch (error) {
       const message = error.message || ''
       if (/offline/i.test(message)) setOffline(true)
@@ -950,7 +1178,11 @@ export default function AgentChat({
     if (tool === 'chat_write_plan_block') { await api(`/api/plan/blocks/${id}`, 'DELETE'); return }
     if (tool === 'chat_write_note') { await api(`/api/notes/${id}`, 'DELETE'); return }
     if (tool === 'chat_write_partner_task') { await api(`/api/partner-tasks/${id}`, 'DELETE'); return }
+    if (tool === 'chat_write_task') { await api(`/api/tasks/${id}`, 'DELETE'); return }
     if (tool === 'write_fact') { await api(`/api/facts/${id}`, 'DELETE'); return }
+    if (tool === 'chat_write_learning_profile') {
+      throw new Error("Learning profiles can't be undone from here, edit the topic on the Learning page.")
+    }
     throw new Error('Nothing to undo for this one.')
   }
 
@@ -987,65 +1219,123 @@ export default function AgentChat({
   }
 
   const specialistsReady = !askSpecialists || specialistRoles.length >= 2
+  // Desktop: Enter sends, Shift+Enter newlines. Phone: there is no Shift+Enter,
+  // so Enter newlines and only the 44px send button sends (SPEC-v40 §2.4).
+  const enterSends = !isMobile
 
-  // ---- the panel: composer + stream, shared by every view/target -----
-  // mode: 'dock' | 'expanded' | 'fullscreen'. When this renders inside a
-  // Sheet (mobile expanded, any fullscreen), Sheet already supplies a title
-  // + close control, so the agent-name button and "collapse" icon (which
-  // duplicate that) are skipped there. "Full screen" has no Sheet
-  // equivalent though -- Sheet only ever offers a close, never "expand
-  // further" -- so mobile expanded (a Sheet) still needs that one control,
-  // or full screen becomes unreachable on a phone entirely.
-  function renderPanel(mode, { inSheet = false } = {}) {
+  function openConversation() {
+    wantFocus.current = true
+    openedThisSession.current = true
+    setView('open')
+  }
+  function closeConversation() {
+    setView('dock')
+  }
+
+  // ---- the conversation: header + stream + composer, one flex column -----
+  // mode 'dock' is the desktop card under the Order (last exchange + composer,
+  // no inner scroller); mode 'open' is the full-height surface (phone: fixed
+  // inset 0; desktop: the right-anchored drawer). Same component either way,
+  // so the composer, its draft, and every sub-sheet's state carry across.
+  function renderPanel(mode) {
     const compact = mode === 'dock'
     const shownTurns = compact ? turns.slice(-1) : turns
-    const showFullscreenControl = mode === 'expanded'
-    const showHeader = !inSheet || showFullscreenControl
+    // column-reverse pins the newest message to the bottom with no JS, so the
+    // DOM order is newest-first; the empty state and banners come last in
+    // DOM, i.e. sit above the oldest message. A compacted thread shows its
+    // recent turns, then a divider, then (on request) the summarized ones.
+    const compacted = !compact && earlierTurns.length > 0
+    const ordered = compact ? [...shownTurns].reverse() : [...recentTurns].reverse()
+    const olderOrdered = compacted && showEarlier ? [...earlierTurns].reverse() : []
+    const renderTurn = (turn) => (
+      <Exchange
+        key={turn.id}
+        turn={turn}
+        role={role}
+        codename={codename}
+        onCopyDraft={copyDraft}
+        onFileDraft={setFileDraft}
+        onRetry={(item) => submit(item.question, [])}
+        onTapMissing={(chip) => {
+          setMissingHighlight(chip)
+          setShowContext(true)
+        }}
+        onUndoWrite={undoWrite}
+        undoneWrites={undoneWrites}
+        showWriteHint={turn.id === writeHintTurnId}
+      />
+    )
     return (
       <div className={`consult-panel consult-panel--${mode}`} style={{ '--agent': chatRoleColor(role) }}>
-        {showHeader && (
-          <header className={`consult-panel-head${inSheet ? ' consult-panel-head--actions-only' : ''}`}>
-            {!inSheet && (
+        <header className="consult-panel-head">
+          <button
+            type="button"
+            className="consult-panel-agent"
+            onClick={() => setShowThreads(true)}
+            aria-haspopup="dialog"
+            aria-label={`${codename}: switch agent or thread`}
+          >
+            <Glyph role={role} />
+            <span className="consult-panel-agent-name">{codename}</span>
+            <span className="ac-caret" aria-hidden="true">▾</span>
+          </button>
+          <div className="consult-panel-actions">
+            {!compact && (
               <button
                 type="button"
-                className="consult-panel-agent"
-                onClick={() => setShowReasoning(true)}
+                ref={menuTriggerRef}
+                className="consult-icon-btn"
+                onClick={() => setShowThreadMenu(true)}
                 aria-haspopup="dialog"
+                aria-label="Thread menu"
               >
-                <Glyph role={role} />
-                <span>{codename}</span>
+                <span aria-hidden="true">⋯</span>
               </button>
             )}
-            <div className="consult-panel-actions">
-              {showFullscreenControl && !inSheet && (
-                <button
-                  type="button"
-                  className="consult-icon-btn"
-                  onClick={() => setView('dock')}
-                  aria-label="Collapse chat"
-                >
-                  <span aria-hidden="true">−</span>
-                </button>
-              )}
-              {showFullscreenControl && (
-                <button
-                  type="button"
-                  className="consult-icon-btn"
-                  onClick={() => setView('fullscreen')}
-                  aria-label="Full screen chat"
-                >
-                  <span aria-hidden="true">⤢</span>
-                </button>
-              )}
-            </div>
-          </header>
-        )}
+            {compact ? (
+              <button
+                type="button"
+                className="consult-icon-btn"
+                onClick={openConversation}
+                aria-label="Open chat"
+              >
+                <span aria-hidden="true">⤢</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="consult-icon-btn"
+                onClick={closeConversation}
+                aria-label="Close chat"
+              >
+                <span aria-hidden="true">×</span>
+              </button>
+            )}
+          </div>
+        </header>
 
-        <div className="ac-stream" ref={mode !== 'dock' ? streamRef : undefined}>
-          {offline && (
-            <p className="ac-banner" role="status">Offline. Your Mac is not reachable.</p>
+        <div className="ac-stream">
+          {ordered.map(renderTurn)}
+
+          {compacted && (
+            <div className="ac-compacted" role="separator" aria-label="Compacted">
+              <span className="ac-compacted-line" aria-hidden="true" />
+              <span className="ac-compacted-text">
+                Compacted · {earlierTurns.length} {earlierTurns.length === 1 ? 'turn' : 'turns'}
+                {thread?.compacted_at ? ` · ${relTime(thread.compacted_at)}` : ''}
+              </span>
+              <button
+                type="button"
+                className="ac-compacted-toggle"
+                onClick={() => setShowEarlier((v) => !v)}
+                aria-expanded={showEarlier}
+              >
+                {showEarlier ? 'Hide earlier' : 'Show earlier'}
+              </button>
+              <span className="ac-compacted-line" aria-hidden="true" />
+            </div>
           )}
-          {expired && <p className="ac-banner" role="status">{expired}</p>}
+          {olderOrdered.map(renderTurn)}
 
           {shownTurns.length === 0 && !offline && (
             <div className="ac-empty">
@@ -1054,25 +1344,10 @@ export default function AgentChat({
               <p className="ac-empty-line">Reads your record. Never acts on it.</p>
             </div>
           )}
-
-          {shownTurns.map((turn) => (
-            <Exchange
-              key={turn.id}
-              turn={turn}
-              role={role}
-              codename={codename}
-              onCopyDraft={copyDraft}
-              onFileDraft={setFileDraft}
-              onRetry={(item) => submit(item.question, [])}
-              onTapMissing={(chip) => {
-                setMissingHighlight(chip)
-                setShowContext(true)
-              }}
-              onUndoWrite={undoWrite}
-              undoneWrites={undoneWrites}
-              showWriteHint={turn.id === writeHintTurnId}
-            />
-          ))}
+          {expired && <p className="ac-banner" role="status">{expired}</p>}
+          {offline && (
+            <p className="ac-banner" role="status">Offline. Your Mac is not reachable.</p>
+          )}
         </div>
 
         <form
@@ -1097,7 +1372,6 @@ export default function AgentChat({
               id="ac-question"
               ref={fieldRef}
               value={question}
-              onFocus={() => { if (view === 'dock') setView('expanded') }}
               onChange={(event) => {
                 setQuestion(event.target.value.slice(0, MAX_QUESTION))
                 autoGrow()
@@ -1105,8 +1379,10 @@ export default function AgentChat({
               rows={1}
               maxLength={MAX_QUESTION}
               placeholder={`Ask ${shortName(codename)}`}
+              enterKeyHint={enterSends ? 'send' : 'enter'}
+              autoCapitalize="sentences"
               onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
+                if (enterSends && event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault()
                   if (!running && question.trim() && specialistsReady) submit()
                 }
@@ -1136,110 +1412,125 @@ export default function AgentChat({
             <p className="ac-hint">Pick 2 or 3 specialists, or turn that off.</p>
           )}
         </form>
-
-        {showContext && (
-          <ContextSheet
-            chips={contextChips}
-            granted={granted}
-            wanted={missingHighlight}
-            accent={chatRoleColor(role)}
-            anchor={contextTriggerRef}
-            onToggle={(chip) => toggleChip(chip).catch((e) => toast?.(e.message, 'warn'))}
-            onClose={() => { setShowContext(false); setMissingHighlight('') }}
-          />
-        )}
-        {showReasoning && (
-          <ReasoningSheet
-            roster={fullRoster}
-            threads={threads}
-            current={role}
-            model={thread?.model || DEFAULT_MODEL}
-            effort={thread?.effort || DEFAULT_EFFORT}
-            running={running}
-            askSpecialists={askSpecialists}
-            specialistRoles={specialistRoles}
-            specialistRoster={specialistRoster}
-            accent={chatRoleColor(role)}
-            grantedCapabilities={granted}
-            onToggleCapability={toggleCapability}
-            onPickAgent={(next) => { setShowReasoning(false); pickAgent(next) }}
-            onPickModel={(id) => patchThread({ model: id }).catch((e) => toast?.(e.message, 'warn'))}
-            onPickEffort={(id) => patchThread({ effort: id }).catch((e) => toast?.(e.message, 'warn'))}
-            onToggleSpecialists={() => setAskSpecialists((v) => { if (v) setSpecialistRoles([]); return !v })}
-            onToggleRole={(r) => setSpecialistRoles((cur) => toggleRoomRole(cur, r, specialistRoster))}
-            onClose={() => setShowReasoning(false)}
-          />
-        )}
-        {fileDraft && (
-          <FileDraftDialog
-            draft={fileDraft.draft}
-            busy={filing}
-            onCancel={() => setFileDraft(null)}
-            onConfirm={confirmFile}
-          />
-        )}
       </div>
     )
   }
 
-  // ---- SPEC-v37 §7.2: pick the render target for the current view -----
-  if (view === 'dock') {
-    if (dockNode) return createPortal(renderPanel('dock'), dockNode)
-    // Command isn't the active page: a compact re-entry pill, not a floating
-    // composer (osui L2/L3 -- a second job over whatever screen Ian is on).
-    return <DockPill role={role} codename={codename} running={running} onExpand={() => setView('expanded')} />
-  }
+  // Sub-sheets are siblings of the conversation, never children (SPEC-v40
+  // §2.4): a sheet inside the open conversation's own Sheet would nest two
+  // focus traps, and Escape would close both at once.
+  const sheets = (
+    <>
+      {showContext && (
+        <ContextSheet
+          chips={contextChips}
+          granted={granted}
+          wanted={missingHighlight}
+          accent={chatRoleColor(role)}
+          anchor={contextTriggerRef}
+          onToggle={(chip) => toggleChip(chip).catch((e) => toast?.(e.message, 'warn'))}
+          onClose={() => { setShowContext(false); setMissingHighlight('') }}
+        />
+      )}
+      {showThreads && (
+        <ThreadsSheet
+          roster={fullRoster}
+          threads={threads}
+          currentThreadId={thread?.id}
+          accent={chatRoleColor(role)}
+          onOpenThread={openThread}
+          onNewThread={newThread}
+          onClose={() => setShowThreads(false)}
+        />
+      )}
+      {showThreadMenu && (
+        <ThreadMenuSheet
+          codename={codename}
+          accent={chatRoleColor(role)}
+          anchor={menuTriggerRef}
+          compactable={compactable}
+          compactReason={compactReason}
+          busy={compacting}
+          onCompact={compactThread}
+          onArchive={archiveThread}
+          onNewThread={() => newThread(role)}
+          onClose={() => setShowThreadMenu(false)}
+        />
+      )}
+      {showReasoning && (
+        <ReasoningSheet
+          model={thread?.model || DEFAULT_MODEL}
+          effort={thread?.effort || DEFAULT_EFFORT}
+          running={running}
+          askSpecialists={askSpecialists}
+          specialistRoles={specialistRoles}
+          specialistRoster={specialistRoster}
+          accent={chatRoleColor(role)}
+          grantedCapabilities={granted}
+          onToggleCapability={toggleCapability}
+          onPickModel={(id) => patchThread({ model: id }).catch((e) => toast?.(e.message, 'warn'))}
+          onPickEffort={(id) => patchThread({ effort: id }).catch((e) => toast?.(e.message, 'warn'))}
+          onToggleSpecialists={() => setAskSpecialists((v) => { if (v) setSpecialistRoles([]); return !v })}
+          onToggleRole={(r) => setSpecialistRoles((cur) => toggleRoomRole(cur, r, specialistRoster))}
+          onClose={() => setShowReasoning(false)}
+        />
+      )}
+      {fileDraft && (
+        <FileDraftDialog
+          draft={fileDraft.draft}
+          busy={filing}
+          onCancel={() => setFileDraft(null)}
+          onConfirm={confirmFile}
+        />
+      )}
+    </>
+  )
 
-  if (view === 'expanded') {
-    if (isMobile) {
+  // ---- SPEC-v40 §2.1: two states, and the render target for each -------
+  if (view === 'dock') {
+    if (dockNode) {
       return (
-        <Sheet
-          open
-          onClose={() => setView('dock')}
-          title={codename}
-          variant="dialog"
-          className="consult-sheet consult-sheet--expanded"
-        >
-          {renderPanel('expanded', { inSheet: true })}
-        </Sheet>
+        <>
+          {createPortal(
+            isMobile
+              ? <DockRow role={role} codename={codename} turns={turns} running={running} onOpen={openConversation} />
+              : renderPanel('dock'),
+            dockNode,
+          )}
+          {sheets}
+        </>
       )
     }
-    // Desktop: NOT a Sheet overlay. Grows inline in the Command grid (via the
-    // portal target) up to --content-w while the rest of the page keeps
-    // scrolling normally around it; off Command, the same panel floats in a
-    // small fixed container instead (still no backdrop, still not blocking).
-    if (dockNode) return createPortal(renderPanel('expanded'), dockNode)
-    return <FixedPanel wide>{renderPanel('expanded')}</FixedPanel>
+    // Command isn't the active page: a compact re-entry pill, and only once
+    // the conversation has actually been used this session (or is answering).
+    if (running || openedThisSession.current) {
+      return (
+        <>
+          <DockPill role={role} codename={codename} running={running} onExpand={openConversation} />
+          {sheets}
+        </>
+      )
+    }
+    return sheets
   }
 
-  // view === 'fullscreen': always a real modal takeover (backdrop, focus
-  // trap, Escape, body.sheet-open hiding the mobile tab bar), the one state
-  // that should actually block the rest of the app. Reusing Sheet here
-  // (rather than a bespoke `#consult` hash overlay wired into App.jsx's page
-  // router) keeps that tested modal behaviour for free and matches SPEC-v37
-  // §7.2's own "state is per-session in sessionStorage, never a route" line;
-  // see this file's header comment / the final report for the full reasoning.
+  // view === 'open'. Phone: the conversation IS the screen (fixed inset 0,
+  // tab bar hidden via body.sheet-open, Escape/focus trap from Sheet).
+  // Desktop: a right-anchored drawer; the page stays usable behind it.
+  // Sheet's own head is hidden by CSS on both: the panel's header carries the
+  // identity button and the close control.
   return (
-    <Sheet
-      open
-      onClose={() => setView('expanded')}
-      title={codename}
-      variant="dialog"
-      className="consult-sheet consult-sheet--fullscreen"
-    >
-      {renderPanel('fullscreen', { inSheet: true })}
-    </Sheet>
+    <>
+      <Sheet
+        open
+        onClose={closeConversation}
+        title={codename}
+        variant={isMobile ? 'dialog' : 'drawer'}
+        className={isMobile ? 'consult-sheet consult-sheet--full' : 'consult-sheet consult-sheet--drawer'}
+      >
+        {renderPanel('open')}
+      </Sheet>
+      {sheets}
+    </>
   )
-}
-
-// SPEC-v29 Phase 6: the once-per-thread instant-write nudge. Gated in
-// localStorage (not component state) so it survives a reload, and keyed by
-// thread id so a fresh thread with a different agent gets its own one-time
-// showing rather than inheriting "seen" from wherever Ian saw it first.
-const WRITE_HINT_SEEN_PREFIX = 'ianos:chat-write-hint-seen:'
-function writeHintSeen(threadId) {
-  try { return localStorage.getItem(WRITE_HINT_SEEN_PREFIX + threadId) === '1' } catch { return true }
-}
-function markWriteHintSeen(threadId) {
-  try { localStorage.setItem(WRITE_HINT_SEEN_PREFIX + threadId, '1') } catch { /* not load-bearing */ }
 }

@@ -12,6 +12,8 @@ import {
   ACTIVE_CHAT_TURN_KEY,
   activeRoomRoles,
   clearActiveChatTurn,
+  groupThreadsByRole,
+  partitionCompacted,
   invocationPollDelay,
   isActiveInvocation,
   isTerminalInvocation,
@@ -80,4 +82,30 @@ it('rejects a non-positive-integer turn id rather than storing garbage', () => {
   expect(rememberActiveChatTurn(-3)).toBe(false)
   expect(rememberActiveChatTurn('not a number')).toBe(false)
   expect(readActiveChatTurnId()).toBe(null)
+})
+
+it('SPEC-v40: a compacted thread splits at summary_turn_count and never loses a turn', () => {
+  const turns = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }]
+  expect(partitionCompacted(turns, 3)).toEqual({ earlier: turns.slice(0, 3), recent: turns.slice(3) })
+  expect(partitionCompacted(turns, 0)).toEqual({ earlier: [], recent: turns })
+  // A count past the end (turns pruned since) collapses everything, drops nothing.
+  expect(partitionCompacted(turns, 9)).toEqual({ earlier: turns, recent: [] })
+  expect(partitionCompacted(undefined, 2)).toEqual({ earlier: [], recent: [] })
+})
+
+it('SPEC-v40: threads group under their agent in roster order, newest first, every active agent listed', () => {
+  const roster = [
+    { role: 'steward', codename: 'Alfred Pennyworth', active: true },
+    { role: 'watchdog', codename: 'Dumbledore', active: true },
+    { role: 'archivist', codename: 'Samwell Tarly', active: false },
+  ]
+  const threads = [
+    { id: 9, role: 'watchdog', title: 'SPAN 210 notes' },
+    { id: 4, role: 'watchdog', title: 'Drop/add' },
+    { id: 7, role: 'archivist', title: 'retired agent' },
+  ]
+  const groups = groupThreadsByRole(threads, roster)
+  expect(groups.map((g) => g.role)).toEqual(['steward', 'watchdog'])
+  expect(groups[0].threads).toEqual([])
+  expect(groups[1].threads.map((t) => t.id)).toEqual([9, 4])
 })

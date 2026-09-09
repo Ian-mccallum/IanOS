@@ -38,7 +38,7 @@ AGENT_INVOCATION_EVIDENCE_LABELS = frozenset({
     "Health log", "Calendar and plan", "Weekly focus", "Document register",
     "Infrastructure status", "Agent memos", "Long-term facts",
     "Publishing log", "The Line", "Notes", "Mail", "School portal",
-    "Memory search",
+    "Class notes", "Memory search",
 })
 
 # SPEC-v25. Closed model enum; must stay identical to agents.runner HAIKU/SONNET.
@@ -74,12 +74,24 @@ CHAT_CHIP_IDS = (
     "money", "mail", "calendar", "school", "documents", "web",
     "files", "workspace", "shell",
 )
+# Source chips a new thread for this role opens with, on top of "files".
+# Only roles whose beat is unreadable without the chip belong here.
+CHAT_DEFAULT_CHIPS_BY_ROLE = {"watchdog": ("school",)}
 CHAT_THREAD_STATUSES = ("OPEN", "CLOSED")
 CHAT_TURNS_PER_THREAD = 200
 # Chat is a conversation, not a consult log: a memory that resets weekly
 # reads as broken. Ask and inspect keep the shorter window.
 CHAT_RETENTION_DAYS = 30
 CHAT_PRIOR_TURN_WINDOW = 12
+# SPEC-v40 §4: memory and Compact. A summary is Compact's bounded output;
+# these bound what it covers, when it fires on its own, and how much of it a
+# new thread with the same agent receives.
+CHAT_SUMMARY_CHARS = 1200            # one thread's stored summary
+CHAT_COMPACT_MIN_TURNS = 4           # succeeded turns since the last summary before Compact is offered
+CHAT_COMPACT_AUTO_TURNS = 40         # turns since the last summary that trigger Compact on their own
+CHAT_CROSS_THREAD_SUMMARIES = 3      # earlier same-role threads a new thread hears about
+CHAT_CROSS_SUMMARY_CHARS = 600       # each, in the prompt
+CHAT_CROSS_SUMMARY_BUDGET = 2000     # all of them together
 
 # SPEC-v30. Closed enums for the Money page's own display preferences
 # (money_prefs). Ian's config only, never agent-facing.
@@ -100,6 +112,7 @@ FACT_KINDS = ("fact", "preference", "date", "rule")
 NAMESPACE_DOMAINS = {
     "partner": "personal", "family": "personal", "uiuc": "college",
     "content": "business", "training": "health", "market": "finance",
+    "learning": "personal",
 }
 
 
@@ -378,6 +391,24 @@ CREATE TABLE IF NOT EXISTS health_insights (
     dismissed_at TEXT
 );
 
+-- Body's plainest log. Events, not tallies (D3): the day's count is always
+-- COUNT(*) over live rows, never a stored number, so an undo is a soft
+-- delete and the count rebuilds itself. `day` is stamped at the tap, not
+-- derived from logged_at, so a 2pm tap that syncs from the phone at 6pm
+-- still counts for the day it happened (the gym-confirm precedent).
+-- `bristol` and `note` are the optional second beat and stay NULL/'' for a
+-- one-tap log; nothing on this table is ever required.
+CREATE TABLE IF NOT EXISTS poop_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    day        TEXT NOT NULL,
+    logged_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    bristol    INTEGER CHECK (bristol IS NULL OR bristol BETWEEN 1 AND 7),
+    note       TEXT NOT NULL DEFAULT '',
+    source     TEXT NOT NULL DEFAULT 'ian' CHECK (source IN ('ian')),
+    deleted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_poop_log_day ON poop_log(day) WHERE deleted_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS calendar_events (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     date         TEXT NOT NULL,
@@ -473,6 +504,25 @@ CREATE TABLE IF NOT EXISTS partner_tasks (
     deleted_at       TEXT,
     deleted_batch_id TEXT
 );
+
+-- SPEC-v41 §4.2: Life's daily to-do. Deliberately not partner_tasks (Ian's
+-- decision, no shared table): no time slot (a plan block), no target (a
+-- goal), no partner (partner_tasks stays its own thing).
+CREATE TABLE IF NOT EXISTS tasks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    title        TEXT NOT NULL,
+    due_date     TEXT NOT NULL,                       -- YYYY-MM-DD, local
+    priority     INTEGER NOT NULL DEFAULT 0 CHECK (priority IN (0, 1)),
+    goal_id      INTEGER REFERENCES goals(id) ON DELETE SET NULL,
+    source       TEXT NOT NULL DEFAULT 'ian'
+                   CHECK (source IN ('ian', 'chat', 'agent', 'goal_draft')),
+    source_role  TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    done_at      TEXT,
+    deleted_at   TEXT,
+    position     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_open ON tasks(due_date) WHERE done_at IS NULL AND deleted_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS facts (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -821,6 +871,14 @@ CREATE TABLE IF NOT EXISTS chat_threads (
     -- hand-rolled _prior_turn_prompt_rows/_chat_prior_block mechanism. Empty
     -- string (not NULL) until the thread's first turn completes.
     sdk_session_id     TEXT NOT NULL DEFAULT '',
+    -- SPEC-v40 §3.2: durable threads. title is server-set from the first
+    -- question (never model-written); summary is Compact's bounded output
+    -- (empty = never compacted); summary_turn_count is how many turns it
+    -- covers; compacted_at is when. Plain ALTERs in _migrate_columns.
+    title              TEXT NOT NULL DEFAULT '',
+    summary            TEXT NOT NULL DEFAULT '',
+    summary_turn_count INTEGER NOT NULL DEFAULT 0,
+    compacted_at       TEXT,
     created_at         TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at         TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
@@ -1208,6 +1266,11 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
         # it, so it travels with the brief row instead, for the dashboard to
         # render as its own small line wherever it renders the brief.
         ("briefs", "dispatch_summary", "TEXT NOT NULL DEFAULT ''"),
+        # SPEC-v40 §3.2: durable threads. No CHECK touched, so no rebuild.
+        ("chat_threads", "title", "TEXT NOT NULL DEFAULT ''"),
+        ("chat_threads", "summary", "TEXT NOT NULL DEFAULT ''"),
+        ("chat_threads", "summary_turn_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("chat_threads", "compacted_at", "TEXT"),
     ]
     for table, col, typedef in alters:
         if _table_exists(conn, table) and not _column_exists(conn, table, col):
@@ -1405,6 +1468,27 @@ def _migrate_agent_invocations_chat(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _backfill_chat_thread_titles(conn: sqlite3.Connection) -> None:
+    """SPEC-v40 §3.2: threads that predate the title column get one from
+    their first question, the same rule create_chat_turn applies going
+    forward. Idempotent: only empty titles with at least one turn."""
+    if not _table_exists(conn, "chat_threads") or not _column_exists(conn, "chat_threads", "title"):
+        return
+    rows = conn.execute(
+        """SELECT t.id AS id,
+                  (SELECT question FROM agent_invocations i
+                    WHERE i.thread_id=t.id AND i.invocation_kind='chat_turn'
+                    ORDER BY i.id ASC LIMIT 1) AS first_question
+             FROM chat_threads t
+            WHERE t.title=''"""
+    ).fetchall()
+    for row in rows:
+        title = chat_thread_title(row["first_question"] or "")
+        if title:
+            conn.execute("UPDATE chat_threads SET title=? WHERE id=?", (title, row["id"]))
+    conn.commit()
+
+
 def run_migrations(conn: sqlite3.Connection) -> None:
     _migrate_columns(conn)
     _backfill_brief_governs_date(conn)
@@ -1416,6 +1500,13 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     _migrate_agent_invocations_mode(conn)
     _migrate_agent_invocations_chat(conn)
     _migrate_chat_threads_v26(conn)
+    # A CHECK rebuild above recreates a table with an explicit column list,
+    # so any column _migrate_columns ALTERed in this same run is gone again
+    # (the sdk_session_id trap, CLAUDE.md). Re-running the idempotent ALTER
+    # pass closes that class of bug for every column, not just the ones the
+    # rebuild remembered to carry.
+    _migrate_columns(conn)
+    _backfill_chat_thread_titles(conn)
     # These indexes reference Phase-B columns that an older table only gains
     # above, so they cannot live in the initial SCHEMA executescript.
     conn.execute(
@@ -1937,9 +2028,12 @@ def prune_agent_invocations(
         (f"-{chat_age} days", f"-{age} days"),
     )
     deleted = int(cur.rowcount)
+    # SPEC-v40 §3.4: a compacted thread whose turns aged out keeps its
+    # summary; that summary is the thread's memory and the whole point.
     conn.execute(
         """DELETE FROM chat_threads
            WHERE updated_at < datetime('now', 'localtime', ?)
+             AND summary = ''
              AND NOT EXISTS (
                  SELECT 1 FROM agent_invocations
                  WHERE agent_invocations.thread_id = chat_threads.id
@@ -2184,22 +2278,108 @@ def create_chat_thread(conn, model: str, role: str = "chief",
     if effort not in CHAT_EFFORTS:
         raise ValueError("chat thread effort must be a closed effort level")
     role = str(role or "chief").strip() or "chief"
-    conn.execute(
-        """UPDATE chat_threads
-           SET status='CLOSED', updated_at=datetime('now', 'localtime')
-           WHERE status='OPEN' AND role=?""",
-        (role,),
-    )
+    # SPEC-v40 §3.1: threads are durable. Creating one no longer closes the
+    # role's other OPEN threads (SPEC-v26's one-open-thread-per-role law is
+    # repealed); the "current" thread for a role is simply the most recently
+    # updated OPEN one, and older ones stay listed and resumable.
     # SPEC-v37 §2.7: Files is the one capability chip granted by default; the
     # column's own DEFAULT clause is fixed at table-creation time and cannot
     # retroactively change for a database whose chat_threads already exists,
     # so every new row states it explicitly instead of relying on that.
+    # A role whose whole beat lives behind one source chip gets that chip on
+    # by default too: a Dumbledore thread that opens with School off is an
+    # academic copilot that cannot see the syllabus, which is how "the school
+    # helper can't read my notes" shipped. Ian can still turn it off.
+    chips = ["files", *CHAT_DEFAULT_CHIPS_BY_ROLE.get(role, ())]
     cur = conn.execute(
         "INSERT INTO chat_threads (model, role, effort, granted_chips) VALUES (?,?,?,?)",
-        (model, role, effort, canonical_granted_chips(["files"])),
+        (model, role, effort, canonical_granted_chips(chips)),
     )
     conn.commit()
     return get_chat_thread(conn, cur.lastrowid)
+
+
+def chat_turns_since_summary(conn, thread_id: int) -> list[dict]:
+    """Succeeded turns not yet covered by the thread's summary, oldest first.
+
+    `summary_turn_count` is the thread's total turn count at compact time, so
+    everything after that offset (in id order) is new. After a prune the
+    offset can under-skip and a few covered turns get summarized twice;
+    Compact is cumulative (it feeds the previous summary back in), so that is
+    harmless, whereas over-skipping would silently drop conversation.
+    """
+    thread = get_chat_thread(conn, thread_id)
+    if thread is None:
+        return []
+    offset = max(0, int(thread.get("summary_turn_count") or 0))
+    rows = conn.execute(
+        """SELECT id, question, answer, status FROM agent_invocations
+           WHERE thread_id=? AND invocation_kind='chat_turn'
+           ORDER BY id ASC LIMIT -1 OFFSET ?""",
+        (int(thread_id), offset),
+    ).fetchall()
+    out = []
+    for row in rows:
+        if row["status"] != "SUCCEEDED":
+            continue
+        body = ""
+        try:
+            parsed = json.loads(row["answer"] or "")
+            if isinstance(parsed, dict):
+                body = str(parsed.get("body") or "").strip()
+                verdict = str(parsed.get("verdict") or "").strip()
+                if verdict and verdict != "-":
+                    body = f"{body}\n[verdict] {verdict}".strip()
+        except (TypeError, ValueError):
+            body = ""
+        out.append({"id": int(row["id"]), "question": row["question"] or "", "body": body})
+    return out
+
+
+def set_chat_thread_summary(conn, thread_id: int, summary: str) -> dict | None:
+    """Store Compact's output and start the thread's memory over (§4.2).
+
+    Bounded to CHAT_SUMMARY_CHARS. summary_turn_count becomes the current
+    total so chat_turns_since_summary starts after this point, and
+    sdk_session_id is cleared so the NEXT turn opens a fresh native session
+    whose only history is this summary. Turn rows are never touched.
+    """
+    clean = " ".join(str(summary or "").split())[:CHAT_SUMMARY_CHARS].strip()
+    if not clean:
+        raise ValueError("a compact summary cannot be empty")
+    conn.execute(
+        """UPDATE chat_threads
+           SET summary=?, summary_turn_count=?, compacted_at=datetime('now', 'localtime'),
+               sdk_session_id='', updated_at=datetime('now', 'localtime')
+           WHERE id=?""",
+        (clean, chat_turn_count(conn, thread_id), int(thread_id)),
+    )
+    conn.commit()
+    return get_chat_thread(conn, thread_id)
+
+
+def chat_thread_summaries_for_role(conn, role: str, *, exclude_id: int | None = None,
+                                   limit: int = CHAT_CROSS_THREAD_SUMMARIES) -> list[dict]:
+    """Earlier compacted threads for ONE role, newest compact first (§4.4).
+
+    Same role only, by construction of the WHERE clause: a Dumbledore thread
+    never receives a Jordan Belfort summary. Title, date, summary; no ids
+    the model could cite as evidence.
+    """
+    rows = conn.execute(
+        """SELECT title, compacted_at, summary FROM chat_threads
+           WHERE role=? AND summary <> '' AND id <> ?
+           ORDER BY compacted_at DESC, id DESC LIMIT ?""",
+        (str(role), int(exclude_id or 0), max(0, int(limit))),
+    ).fetchall()
+    return [
+        {
+            "title": row["title"] or "(untitled)",
+            "date": (row["compacted_at"] or "")[:10],
+            "summary": row["summary"],
+        }
+        for row in rows
+    ]
 
 
 def set_chat_thread_session(conn, thread_id: int, session_id: str) -> None:
@@ -2237,18 +2417,27 @@ def get_chat_thread(conn, thread_id: int, *, include_turns: bool = False) -> dic
     return item
 
 
-def list_chat_threads(conn, limit: int = 20) -> list[dict]:
-    """Summaries only: no bodies, no questions. OPEN first, then recency."""
+def list_chat_threads(conn, limit: int = 50) -> list[dict]:
+    """Summaries only: no bodies, no questions, no summary text.
+
+    SPEC-v40 §3.3: newest activity first regardless of status, so the
+    Threads sheet reads as a history; each row carries turn_count and
+    has_summary so the UI can label a compacted thread without fetching it.
+    """
     rows = conn.execute(
-        """SELECT * FROM chat_threads
-           ORDER BY CASE status WHEN 'OPEN' THEN 0 ELSE 1 END,
-                    updated_at DESC, id DESC
-           LIMIT ?""",
+        """SELECT t.*,
+                  (SELECT COUNT(*) FROM agent_invocations i
+                    WHERE i.thread_id=t.id AND i.invocation_kind='chat_turn') AS turn_count
+             FROM chat_threads t
+            ORDER BY t.updated_at DESC, t.id DESC
+            LIMIT ?""",
         (max(1, min(int(limit), 50)),),
     ).fetchall()
     out = []
     for row in rows:
         item = _chat_thread_dict(row)
+        item["turn_count"] = int(item.get("turn_count") or 0)
+        item["has_summary"] = bool(item.get("summary"))
         last = conn.execute(
             """SELECT answer FROM agent_invocations
                WHERE thread_id=? AND invocation_kind='chat_turn'
@@ -2279,8 +2468,15 @@ def patch_chat_thread(conn, thread_id: int, *, model: str | None = None,
     current = get_chat_thread(conn, thread_id)
     if current is None:
         return None
+    # SPEC-v40 §3.1: a CLOSED thread accepts exactly one patch, reopening
+    # (status=OPEN, alone). Its settings stay frozen until it is live again,
+    # so an archive is never silently edited from a stale tab.
     if current["status"] == "CLOSED" and status != "CLOSED":
-        raise ValueError("closed chat thread cannot be patched")
+        only_reopen = status == "OPEN" and all(
+            v is None for v in (model, granted_chips, specialist_sonnet, effort)
+        )
+        if not only_reopen:
+            raise ValueError("closed chat thread cannot be patched; reopen it first")
     updates: list[str] = []
     params: list = []
     if effort is not None:
@@ -2364,12 +2560,29 @@ def create_chat_turn(conn, thread_id: int, question: str, *, model: str) -> dict
            VALUES ('chief', 'chat', ?, 'chat_turn', ?, ?)""",
         (safe_question, int(thread_id), model),
     )
+    # SPEC-v40 §3.2: the title is the first question, server-set once, never
+    # model-written. It is what the Threads list shows.
     conn.execute(
-        "UPDATE chat_threads SET updated_at=datetime('now', 'localtime') WHERE id=?",
-        (int(thread_id),),
+        """UPDATE chat_threads
+           SET updated_at=datetime('now', 'localtime'),
+               title=CASE WHEN title='' THEN ? ELSE title END
+           WHERE id=?""",
+        (chat_thread_title(safe_question), int(thread_id)),
     )
     conn.commit()
     return get_agent_invocation(conn, cur.lastrowid)
+
+
+CHAT_THREAD_TITLE_CHARS = 60
+
+
+def chat_thread_title(question: str) -> str:
+    """First line of the first question, whitespace-collapsed, 60 chars."""
+    text = " ".join(str(question or "").split())
+    if len(text) <= CHAT_THREAD_TITLE_CHARS:
+        return text
+    cut = text[:CHAT_THREAD_TITLE_CHARS].rsplit(" ", 1)[0].rstrip(" ,;:")
+    return (cut or text[:CHAT_THREAD_TITLE_CHARS]) + "…"
 
 
 def create_chat_children(conn, parent_id: int, roles: list[str] | tuple[str, ...]) -> list[dict]:
@@ -3285,6 +3498,39 @@ def clear_hero_in_domain(conn, domain: str, except_id: int | None = None) -> Non
         conn.execute("UPDATE goals SET hero = 0 WHERE domain = ?", (domain,))
 
 
+def create_goal(conn, *, name: str, kind: str = "goal", domain: str = "business",
+                 target: str = "", unit: str = "", deadline: str | None = None,
+                 current_value: str = "", notes: str = "", metric_key: str = "",
+                 hero: bool = False, priority: int = 0,
+                 depends_on_goal_id: int | None = None, commit: bool = True) -> dict:
+    """SPEC-v41 §5.4: the one INSERT INTO goals in this codebase. `metric_key`
+    is deliberately not validated here -- core/db.py cannot import
+    core/metrics.py (the reverse import already exists), so each caller
+    (api/main.py, agents/runner.py) validates against
+    metrics.METRIC_RESOLVERS before calling this."""
+    name = name.strip()
+    if not name:
+        raise ValueError("goal needs a name")
+    if kind not in ("goal", "quota", "deadline"):
+        raise ValueError("kind must be goal, quota, or deadline")
+    if domain not in DOMAINS:
+        raise ValueError(f"domain must be one of: {', '.join(DOMAINS)}")
+    if hero:
+        clear_hero_in_domain(conn, domain)
+    cur = conn.execute(
+        """INSERT INTO goals
+           (name, kind, domain, target, unit, deadline, current_value, notes,
+            metric_key, hero, priority, depends_on_goal_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (name, kind, domain, target.strip(), unit.strip(), deadline or None,
+         current_value.strip(), notes.strip(), metric_key, 1 if hero else 0,
+         priority, depends_on_goal_id),
+    )
+    if commit:
+        conn.commit()
+    return get_goal(conn, cur.lastrowid)
+
+
 # ------------------------------------------------------------- activity
 
 def log_activity(conn, day: str, audit_calls=0, follow_ups=0, demos=0,
@@ -3495,6 +3741,166 @@ def health_for_day(conn, day: str) -> dict | None:
 
 def health_today(conn) -> dict | None:
     return health_for_day(conn, today())
+
+
+# ------------------------------------------------------------------ poop log
+# Body's plainest logger. Every read below is COUNT(*)/SELECT over live rows;
+# nothing here stores or decrements a tally, which is what makes the undo
+# honest (D3, the streak_events / lead_touches precedent).
+#
+# One writer: the /api/poop routes, i.e. Ian's own taps. No agent tool writes
+# this table and none ever should; physician and coach read the aggregates
+# through read_health and never see `note`.
+
+POOP_BRISTOL_MIN = 1
+POOP_BRISTOL_MAX = 7
+
+
+def _poop_bristol(value) -> int | None:
+    """Validate the optional Bristol score. Absent stays absent."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("bristol must be a number between 1 and 7")
+    if float(value) != int(value):
+        raise ValueError("bristol must be a whole number between 1 and 7")
+    score = int(value)
+    if score < POOP_BRISTOL_MIN or score > POOP_BRISTOL_MAX:
+        raise ValueError("bristol must be between 1 and 7")
+    return score
+
+
+def get_poop(conn, poop_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM poop_log WHERE id = ? AND deleted_at IS NULL", (poop_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def log_poop(conn, *, day: str | None = None, bristol=None, note: str = "",
+             logged_at: str | None = None, commit: bool = True) -> dict:
+    cur = conn.execute(
+        """INSERT INTO poop_log (day, logged_at, bristol, note)
+           VALUES (?, COALESCE(?, datetime('now', 'localtime')), ?, ?)""",
+        (day or today(), logged_at, _poop_bristol(bristol), (note or "").strip()[:280]),
+    )
+    if commit:
+        conn.commit()
+    return get_poop(conn, cur.lastrowid)
+
+
+def update_poop(conn, poop_id: int, commit: bool = True, **fields) -> dict | None:
+    """The optional second beat: Bristol and a one-line note, both editable."""
+    sets, values = [], []
+    if "bristol" in fields:
+        sets.append("bristol = ?")
+        values.append(_poop_bristol(fields["bristol"]))
+    if "note" in fields:
+        sets.append("note = ?")
+        values.append((fields["note"] or "").strip()[:280])
+    if not sets:
+        return get_poop(conn, poop_id)
+    values.append(poop_id)
+    conn.execute(
+        f"UPDATE poop_log SET {', '.join(sets)} WHERE id = ? AND deleted_at IS NULL",
+        values,
+    )
+    if commit:
+        conn.commit()
+    return get_poop(conn, poop_id)
+
+
+def delete_poop(conn, poop_id: int, commit: bool = True) -> dict | None:
+    """Soft, so Undo restores the same row rather than logging a new one."""
+    row = get_poop(conn, poop_id)
+    if row is None:
+        return None
+    conn.execute("UPDATE poop_log SET deleted_at = ? WHERE id = ?", (now(), poop_id))
+    if commit:
+        conn.commit()
+    return row
+
+
+def restore_poop(conn, poop_id: int, commit: bool = True) -> dict | None:
+    conn.execute("UPDATE poop_log SET deleted_at = NULL WHERE id = ?", (poop_id,))
+    if commit:
+        conn.commit()
+    return get_poop(conn, poop_id)
+
+
+def poop_entries(conn, day: str) -> list[dict]:
+    return rows_to_dicts(conn.execute(
+        """SELECT * FROM poop_log
+           WHERE day = ? AND deleted_at IS NULL
+           ORDER BY logged_at ASC, id ASC""",
+        (day,),
+    ).fetchall())
+
+
+def poop_daily_counts(conn, days: int = 7, today_iso: str | None = None) -> list[dict]:
+    """The one read path behind the rail, the averages, and the agent view.
+
+    Returns every day in the window oldest first, including the zero days,
+    so a caller never has to guess which dates a sparse table skipped.
+    """
+    end = date.fromisoformat(today_iso or today())
+    span = max(1, int(days))
+    start = end - timedelta(days=span - 1)
+    counted = {
+        r["day"]: r["n"] for r in conn.execute(
+            """SELECT day, COUNT(*) n FROM poop_log
+               WHERE deleted_at IS NULL AND day >= ? AND day <= ?
+               GROUP BY day""",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+    }
+    return [
+        {"day": (d := (start + timedelta(days=i)).isoformat()), "count": counted.get(d, 0)}
+        for i in range(span)
+    ]
+
+
+def last_poop(conn) -> dict | None:
+    row = conn.execute(
+        """SELECT * FROM poop_log WHERE deleted_at IS NULL
+           ORDER BY logged_at DESC, id DESC LIMIT 1"""
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def poop_state(conn, today_iso: str | None = None, days: int = 7) -> dict:
+    """Everything both the Body panel and the agent aggregate are built from.
+
+    Note text is deliberately absent from the derived numbers here: callers
+    that may show it (the Body page) read `entries`, callers that may not
+    (read_health) take the counts and leave the rows alone.
+    """
+    day = today_iso or today()
+    rail = poop_daily_counts(conn, days, today_iso=day)
+    entries = poop_entries(conn, day)
+    window = [d["count"] for d in rail]
+    scored = [e["bristol"] for e in entries if e["bristol"] is not None]
+    bristol_7d: dict[str, int] = {}
+    for row in conn.execute(
+        """SELECT bristol, COUNT(*) n FROM poop_log
+           WHERE deleted_at IS NULL AND bristol IS NOT NULL AND day >= ? AND day <= ?
+           GROUP BY bristol ORDER BY bristol""",
+        (rail[0]["day"], day),
+    ).fetchall():
+        bristol_7d[str(row["bristol"])] = row["n"]
+    latest = last_poop(conn)
+    return {
+        "day": day,
+        "today_count": len(entries),
+        "entries": entries,
+        "rail": rail,
+        "per_day_avg": round(sum(window) / len(window), 1) if window else 0.0,
+        "days_logged": sum(1 for n in window if n > 0),
+        "window_days": len(rail),
+        "bristol_mix": bristol_7d,
+        "today_bristol": scored,
+        "last_logged_at": latest["logged_at"] if latest else None,
+    }
 
 
 def add_health_insight(
@@ -5823,6 +6229,129 @@ def restore_partner_archive(conn, batch_id: str, commit: bool = True) -> list[di
     except Exception:
         _rollback_partner_write(conn, owned=owned)
         raise
+
+
+# ------------------------------------------------------------------ tasks
+# Life's daily to-do (SPEC-v41 §4). Rolling is a READ, never a nightly write:
+# tasks_today() is the single read path /api/state, read_tasks, and the
+# attention candidate all share. Deletes are soft, the partner_tasks precedent.
+
+def get_task(conn, task_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM tasks WHERE id = ? AND deleted_at IS NULL", (task_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def tasks_today(conn, today: str) -> list[dict]:
+    rows = conn.execute(
+        """SELECT * FROM tasks
+           WHERE done_at IS NULL AND deleted_at IS NULL AND due_date <= ?
+           ORDER BY due_date ASC, priority DESC, position ASC, id ASC""",
+        (today,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def tasks_done_today(conn, today: str) -> list[dict]:
+    rows = conn.execute(
+        """SELECT * FROM tasks
+           WHERE deleted_at IS NULL AND done_at IS NOT NULL AND date(done_at) = ?
+           ORDER BY done_at DESC""",
+        (today,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def create_task(conn, title: str, *, due_date: str | None = None, priority: int = 0,
+                 goal_id: int | None = None, source: str = "ian",
+                 source_role: str = "", commit: bool = True) -> dict:
+    title = title.strip()
+    if not title:
+        raise ValueError("task needs a title")
+    if priority not in (0, 1):
+        raise ValueError("priority must be 0 or 1")
+    if source not in ("ian", "chat", "agent", "goal_draft"):
+        raise ValueError("unknown task source")
+    due_date = due_date or today()
+    cur = conn.execute(
+        """INSERT INTO tasks (title, due_date, priority, goal_id, source, source_role)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (title, due_date, priority, goal_id, source, source_role),
+    )
+    if commit:
+        conn.commit()
+    return get_task(conn, cur.lastrowid)
+
+
+def update_task(conn, task_id: int, commit: bool = True, **fields) -> dict | None:
+    allowed = {"title", "due_date", "priority", "goal_id", "position"}
+    sets, values = [], []
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key == "title":
+            value = str(value).strip()
+        sets.append(f"{key} = ?")
+        values.append(value)
+    if not sets:
+        return get_task(conn, task_id)
+    values.append(task_id)
+    conn.execute(
+        f"UPDATE tasks SET {', '.join(sets)} WHERE id = ? AND deleted_at IS NULL", values
+    )
+    if commit:
+        conn.commit()
+    return get_task(conn, task_id)
+
+
+def set_task_done(conn, task_id: int, done: bool, commit: bool = True) -> dict | None:
+    conn.execute(
+        "UPDATE tasks SET done_at = ? WHERE id = ? AND deleted_at IS NULL",
+        (now() if done else None, task_id),
+    )
+    if commit:
+        conn.commit()
+    return get_task(conn, task_id)
+
+
+def delete_task(conn, task_id: int, commit: bool = True) -> dict | None:
+    row = get_task(conn, task_id)
+    if row is None:
+        return None
+    conn.execute("UPDATE tasks SET deleted_at = ? WHERE id = ?", (now(), task_id))
+    if commit:
+        conn.commit()
+    return row
+
+
+def restore_task(conn, task_id: int, commit: bool = True) -> dict | None:
+    conn.execute("UPDATE tasks SET deleted_at = NULL WHERE id = ?", (task_id,))
+    if commit:
+        conn.commit()
+    return get_task(conn, task_id)
+
+
+def tasks_done_this_week(conn, today_iso: str) -> int:
+    d = date.fromisoformat(today_iso)
+    monday = d - timedelta(days=d.weekday())
+    row = conn.execute(
+        """SELECT COUNT(*) n FROM tasks
+           WHERE deleted_at IS NULL AND done_at IS NOT NULL AND date(done_at) >= ?""",
+        (monday.isoformat(),),
+    ).fetchone()
+    return row["n"]
+
+
+def tasks_done_for_goal(conn, goal_id: int) -> tuple[int, int]:
+    row = conn.execute(
+        """SELECT
+             SUM(CASE WHEN done_at IS NOT NULL THEN 1 ELSE 0 END) done,
+             COUNT(*) total
+           FROM tasks WHERE deleted_at IS NULL AND goal_id = ?""",
+        (goal_id,),
+    ).fetchone()
+    return (row["done"] or 0, row["total"] or 0)
 
 
 # ---------------------------------------------------------------- facts

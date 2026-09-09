@@ -390,10 +390,19 @@ def test_chat_write_note_schema_is_frozen_at_body_and_domain():
     That's fine -- it's the deliberate exception, not a hole -- but its
     schema must stay exactly {body, domain} forever: no folder_id, ever. A
     chat-created note always lands unfiled, never a folder chosen as a side
-    effect of writing text."""
+    effect of writing text.
+
+    Asserted on the PARAMETER SET rather than a literal dict: the schema grew
+    a real `required` list in 2026-09 (`domain` is genuinely optional and used
+    to be advertised as mandatory), and the law here was never about the
+    literal, it was about which parameters exist."""
     from agents import runner
 
-    assert runner.chat_write_note.input_schema == {"body": str, "domain": str}
+    schema = runner.chat_write_note.input_schema
+    params = set(schema["properties"] if "properties" in schema else schema)
+    assert params == {"body", "domain"}, f"chat_write_note grew a parameter: {params}"
+    assert "folder_id" not in params
+    assert set(schema.get("required", [])) == {"body"}
     assert "chat_write_note" in runner.INSTANT_WRITE_TOOLS
     for role, tools in runner.ALLOWLISTS.items():
         assert "chat_write_note" not in tools, \

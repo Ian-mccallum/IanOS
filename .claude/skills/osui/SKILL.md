@@ -64,7 +64,7 @@ done.
 These predate v10 and outrank any visual preference:
 
 - **`--crit` red is banned** in Plan, Journal, The Line, the **lock screen**,
-  and **Fury chat**.
+  **Fury chat**, and **Body's log**.
   A past unfinished block *softens*; it never reddens.
 - **No percentage, no breakable streak, no lifetime counter** anywhere a number
   could read as a verdict on Ian. The gym streak bends instead of resetting.
@@ -101,6 +101,11 @@ Each of these passed review, passed the build, and looked perfect on a laptop.
 | Turning a page into `display:flex; flex-direction:column` | Every child becomes shrinkable: a chip row collapsed to **9px around its own 18px chips** and sliced them in half | Pair it with `> *:not(.the-scroller) { flex: 0 0 auto }` in the same edit |
 | A column header at `top: 0` inside the scrolling canvas | Scrolls away with the content, so the thing it labels becomes unlabelled one gesture in | Headers are a fixed row above the scroller, mirroring its padding and gap so they stay aligned |
 | Offsetting overlapping cards without raising their opacity | At a low alpha every card's text shows through every other, which is *less* legible than the even split it replaced | A cascade must occlude: composite the tint over an opaque base |
+| An overlay control placed where an existing header's actions already sit | A fixed full-screen bar and the page header's own action cluster were both pinned top-right, stacked on the same pixels, and both looked fine in isolation | When a mode adds chrome, hide what that chrome replaces; measure the two rects for overlap rather than trusting the screenshot |
+| A placeholder as an absolutely positioned sibling of an editor | It hid on a React condition, so it stayed under the first characters typed until something else caused a re-render | Draw it from the document's own render pass (a ProseMirror decoration / `::before` on the empty node), never as a stacked element |
+| A single-line flex row with `min-height` for touch | The text sits at the TOP of the box, not its optical centre, and `align-items` cannot fix it because flex has no `align-content` for one line | Use grid: `align-items: baseline` for the text, `align-content: center` for the row |
+| Building a new surface on `.panel` | `.panel` carries no padding of its own (its `.panel-head`/`.panel-body` children do) and clips with `overflow: hidden`. A panel with bare children rendered flush to its own border, and a burst animation inside it was cut off at the edge | Check what the class actually declares. A surface with its own layout takes its own rule, the `.health-signal` precedent |
+| An animation that throws elements sideways from a right-aligned control | The travel goes past the panel edge and the page gains horizontal scroll at 375px, which no desktop check finds | Centre the origin, then measure `scrollWidth - innerWidth` mid-flight, not at rest |
 | Adding a control to the shared 44px `::after` hit-area rule | That rule also sets `position: relative`, which silently kills a `position: sticky` element, decided purely by rule order | Sticky/absolute elements take the `::after` but must stay out of the `position: relative` list |
 
 ## Verifying UI work (in this order)
@@ -160,6 +165,16 @@ prose written here.
 
 Numbers first, verdict, next action. Blunt, never chirpy, never scolding.
 An empty state says what to do in one line; it does not apologise.
+
+**No taglines (binding, Ian 2026-09-02).** A title stands alone. Never write
+a line whose only job is to describe the surface it sits on: "Your day at a
+glance", "One workspace for the week", "Personal admin and everything else",
+"Async workspace", "Small things add up". If a second line exists it carries
+data ("3 open", "next: FIN 300 at 1:00") or an instruction ("Tap any hour to
+add a block"); otherwise delete it. Banned constructions: "one place for",
+"one X for each Y", "at a glance", "your X, one Y at a time", "workspace" as
+a noun for a page, any motto or whisper pool, any sentence that would read
+the same on a template. A page's name is its description.
 Prefer "you took 2 of 4" over "50% approval".
 
 **Anti-slop (binding):**

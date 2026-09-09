@@ -13,8 +13,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from fastapi.testclient import TestClient
+
 from agents import runner  # noqa: E402
-from core import db  # noqa: E402
+from api import main  # noqa: E402
+from core import db, metrics  # noqa: E402
 
 
 @pytest.fixture
@@ -83,3 +86,44 @@ def test_watchdog_runs_regardless_since_it_is_daily_tier(conn):
     run, reason = runner.should_run(meta, conn, date(2026, 8, 31), force=False)
     assert run is True
     assert reason == "daily"
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.connect().close()
+    return TestClient(main.app)
+
+
+def test_life_goal_never_no_data(conn):
+    db.create_goal(conn, name="Join AKPSI", kind="deadline", domain="personal", target="")
+    db.create_goal(conn, name="Read books", kind="quota", domain="personal", target="12",
+                    unit="books", metric_key="tasks_done_this_week")
+    row = db.create_goal(conn, name="Landyut steps", kind="goal", domain="personal",
+                          target="3", unit="steps", metric_key="tasks_done_for_goal")
+    goals = metrics.resolve_goal_actuals(conn, db.all_goals(conn))
+    for g in goals:
+        assert g["status"] in ("ON TRACK", "AT RISK", "OFF TRACK")
+
+
+def test_metric_key_validated(client):
+    r = client.post("/api/goals", json={"name": "x", "metric_key": "not_a_real_key"})
+    assert r.status_code == 422
+
+
+def test_one_goal_insert():
+    api_src = (Path(__file__).resolve().parent.parent / "api" / "main.py").read_text()
+    runner_src = (Path(__file__).resolve().parent.parent / "agents" / "runner.py").read_text()
+    db_src = (Path(__file__).resolve().parent.parent / "core" / "db.py").read_text()
+    assert "INSERT INTO goals" not in api_src
+    assert "INSERT INTO goals" not in runner_src
+    assert "INSERT INTO goals" in db_src
+
+
+def test_goal_patch_writes_memo_on_target_or_deadline_change(client, conn):
+    r = client.post("/api/goals", json={"name": "Read books", "target": "10"})
+    goal_id = r.json()["id"]
+    before = conn.execute("SELECT COUNT(*) n FROM memos").fetchone()["n"]
+    client.patch(f"/api/goals/{goal_id}", json={"target": "12"})
+    after = conn.execute("SELECT COUNT(*) n FROM memos").fetchone()["n"]
+    assert after == before + 1

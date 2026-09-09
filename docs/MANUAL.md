@@ -487,6 +487,15 @@ separate analyst.
 - **Sleep signal.** A short night can reshape the local Body cue (work after 10am,
   gym in the afternoon, no 7am anything) instead of scolding yesterday. It is not
   automatically sent to the Chief or a general agent.
+- **The log.** A poop counter, one tap, with a drawn poop that plops and throws
+  coils. Below it: today's count, a 7-day rail, and when the last one was.
+  Optional Bristol score and note per entry, never required. **Add one you
+  missed** backfills something you forgot at the time it actually happened
+  (today or yesterday, four presets or an exact time, nothing in the future and
+  nothing past 14 days back). Every entry is removable and the Undo restores the
+  same row. No target, no percentage, no streak, no red. Counts and Bristol ride
+  the same health-sharing consent as sleep and steps; the note text never leaves
+  the Mac.
 
 ## Wellness & calendar
 
@@ -501,6 +510,7 @@ make import-fidelity FILE=~/Downloads/Portfolio_Positions.csv
 
 ```bash
 make import-canvas FILE=~/Downloads/calendarfeed.ics
+make sync-syllabus                                                 # seed only, no .ics
 .venv/bin/python ingest/import_canvas_calendar.py FILE --dry-run   # counts only
 ```
 
@@ -525,9 +535,29 @@ What you get:
   the general Notes page, and files you attach to a course live in their own
   private library (never public, always downloaded rather than previewed).
 - **Study aids are off until you turn them on.** `School → study mode` is one
-  local consent switch. A course whose syllabus prohibits AI is blocked in the
-  server, not just hidden in the UI, and turning the switch off stops queued
-  work and prevents an in-flight reply from ever being saved.
+  local consent switch, and it is the only gate: a course's syllabus AI policy
+  is shown on the page but does not block your own study aids. Turning the
+  switch off stops queued work and prevents an in-flight reply from ever being
+  saved.
+- **Classes are listed by when they next meet.** Today's first, in time order,
+  then forward through the week. A course with no meetings (an asynchronous
+  one) sits last.
+- **Search reads every word of every note.** Type in the notebook's search
+  field and you get the notes that mention it, each with the sentence around
+  every hit and the word highlighted, not just the ones whose first few lines
+  happen to contain it.
+- **Writing full screen.** The note takes the window: no nav, no rails, a
+  wider measure and larger type. One floating bar has Notes, Details, Files,
+  Finish and Exit; Escape also exits. **Cmd+B** bolds the selection, or the
+  whole line when nothing is selected. **Cmd+P** starts a bullet list
+  (Cmd+Shift+P numbered). Cmd+P does not open the print dialog while you are
+  in a note.
+- **A deadline Canvas never sent** goes in `known_major_dates` in
+  `data/fall_2026_school_seed.json`, then `make sync-syllabus`. Give it an
+  explicit `id`. Do not insert the row into the database by hand: the next
+  seed load archives anything the file does not list. This is how the Week 3
+  Forensic Science deadlines got in, since ANTH 210 is asynchronous and its
+  module deadlines are not in the .ics feed.
 
 ## Monthly CSV import ritual
 
@@ -647,9 +677,11 @@ make export-public               # rebuild ../ianOS-public, leak-check it, commi
 cd ../ianOS-public && git push   # publish
 ```
 
-The export script and its templates are private and are excluded from the
-mirror; the mirror's own `docs/PUBLIC-MIRROR.md` says what differs. The law
-and the substitution map: `docs/SPEC-v39-public-mirror.md` (private).
+`../ianOS-public` is just the local checkout's directory name; on GitHub the
+mirror is plain `Ian-mccallum/ianOS`. The export script and its templates are
+private and are excluded from the mirror; the mirror's own
+`docs/PUBLIC-MIRROR.md` says what differs. The law and the substitution map:
+`docs/SPEC-v39-public-mirror.md` (private).
 
 ## Layout
 
@@ -667,6 +699,7 @@ core/metrics.py         goal actuals, tradeoffs, domain status, net worth, cash 
 core/pillars.py         pillar summaries for dashboard (btc, body, partner, …)
 core/plan.py            day-plan derivations: sailed, suggestions, free-slot (pure)
 core/journal.py         journal derivations: day-attribution, rolling count, on-this-day (pure)
+dashboard/src/lib/poop.js  the log's derivations: rail levels, the day's line, backfill bounds (pure)
 core/leads.py           lead queue order, call script, run/heat math (pure, no model call)
 api/main.py             FastAPI dashboard API (state, facts, goals, gym, /api/day, leads, runs)
 dashboard/              Vite/React mission control: pillar pages, Command, Plan, Memory, Cmd+K
@@ -680,6 +713,8 @@ dashboard/public/logo.png     site logo source → logo-lockup.png for chrome
 .claude/skills/osui/    the interface law, loaded before any UI work
 .claude/skills/data/    the data law: schema, write boundaries, privacy walls, backups
 dashboard/src/components/TheLine.jsx     the call loop, brief → live → outcome
+dashboard/src/components/PoopLog.jsx     Body's log: tap, burst, rail, backfill
+dashboard/src/components/PoopMark.jsx    the one poop in the product (drawn, not the emoji)
 ingest/                 CSV + SimpleFIN + SnapTrade + iCloud CalDAV + content/wellness loggers
 ingest/import_leads.py  the ONLY bulk writer for leads (re-import never wipes call state)
 ingest/export_leads.py  leads -> CSV with real call history, for re-enrichment

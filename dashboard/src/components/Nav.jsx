@@ -11,6 +11,7 @@ const ALL_LINKS = [
   { id: 'partner', label: 'Partner', short: 'Partner', icon: '♥', badge: 'partner', section: 'pillars' },
   { id: 'school', label: 'School', short: 'School', icon: '△', section: 'pillars' },
   { id: 'life', label: 'Life', short: 'Life', icon: '○', section: 'pillars' },
+  { id: 'learning', label: 'Learning', short: 'Learn', icon: '✎', section: 'pillars' },
   { id: 'money', label: 'Money', short: 'Money', icon: '$', tone: 'money', section: 'pillars' },
   { id: 'inbox', label: 'Inbox', short: 'Inbox', icon: '◇', badge: 'pending', section: 'system' },
   { id: 'log', label: 'Log', short: 'Log', icon: '+', section: 'system' },
@@ -21,7 +22,7 @@ const ALL_LINKS = [
 ]
 
 const MOBILE_PRIMARY = ['home', 'plan', 'btc', 'partner']
-const ALL_MOBILE_MORE = ['body', 'school', 'life', 'money',
+const ALL_MOBILE_MORE = ['body', 'school', 'life', 'learning', 'money',
                          'inbox', 'log', 'memory', 'notes', 'roster', 'journal']
 
 function NavLink({ link, active, badge, onNavigate, compact }) {
@@ -32,6 +33,7 @@ function NavLink({ link, active, badge, onNavigate, compact }) {
       onClick={() => onNavigate(link.id)}
       aria-current={active ? 'page' : undefined}
       title={link.label}
+      data-nav-id={link.id}
     >
       {active && !compact && (
         <motion.span

@@ -22,6 +22,7 @@ class Interaction(str, Enum):
     PROPOSAL_DECISION = "proposal_decision"
     GYM_CONFIRM = "gym_confirm"
     ACTIVITY_INCREMENT = "activity_increment"
+    TASK_COMPLETE = "task_complete"
 
 
 INTERACTIONS = frozenset(item.value for item in Interaction)
@@ -47,9 +48,10 @@ _SOURCE_ORDER = {
     "call": 6,
     "follow_up": 7,
     "partner": 8,
-    "stale": 9,
-    "school": 10,
-    "school_meeting": 11,
+    "task": 9,
+    "stale": 10,
+    "school": 11,
+    "school_meeting": 12,
 }
 
 _ROUTES = {
@@ -483,6 +485,38 @@ def _partner_candidate(rows: list[dict]) -> list[Candidate]:
     )]
 
 
+def _task_candidates(rows: list[dict], now: datetime) -> list[Candidate]:
+    """SPEC-v41 §4.4: a priority-1 task is a band-2 candidate, forever (a
+    task rolled 14 days is still band 2, age never promotes it -- rolling is
+    silent by design, §9)."""
+    today = now.date()
+    out = []
+    for row in rows:
+        if not row.get("priority"):
+            continue
+        due = row["due_date"]
+        if due == today.isoformat():
+            reason = "today"
+        else:
+            due_date = datetime.strptime(due, "%Y-%m-%d").date()
+            reason = f"since {due_date.strftime('%a')}"
+        out.append(_candidate(
+            key=f"task:{row['id']}",
+            kind="task",
+            label=row["title"],
+            reason=reason,
+            route="life",
+            interaction=Interaction.TASK_COMPLETE,
+            ref_id=row["id"],
+            band=2,
+            due_at=None,
+            source="task",
+            stable_order=f"task:{due}:{row.get('position', 0):06d}:{row['id']:012d}",
+            evidence=(Evidence("tasks", "priority", "1"),),
+        ))
+    return out
+
+
 def _school_candidates(rows: list[dict], now: datetime) -> list[Candidate]:
     out: list[Candidate] = []
     grace_window = timedelta(hours=48)
@@ -638,8 +672,8 @@ def collect_candidates(conn, now: datetime, *, preloaded=None) -> list[Candidate
 
     ``preloaded`` lets ``GET /api/state`` reuse reads it already performed. A
     missing key falls back to one read; a present empty value is authoritative.
-    Accepted keys are ``goals``, ``gym``, ``partner_tasks``, ``lead_queue``,
-    ``due_callbacks``, ``plan_blocks``, ``pending_proposals``,
+    Accepted keys are ``goals``, ``gym``, ``partner_tasks``, ``tasks``,
+    ``lead_queue``, ``due_callbacks``, ``plan_blocks``, ``pending_proposals``,
     ``stale_domains``, ``active_promises``, ``activity``, ``goal_lookup``,
     ``school_items``, ``school_meetings``, and ``snoozed_keys``.
     """
@@ -662,6 +696,7 @@ def collect_candidates(conn, now: datetime, *, preloaded=None) -> list[Candidate
         lambda: dict(conn.execute("SELECT * FROM activity WHERE date=?", (today,)).fetchone() or {}),
     ) or {}
     partner_rows = _preload(loaded, "partner_tasks", lambda: db.all_partner_tasks(conn)) or []
+    task_rows = _preload(loaded, "tasks", lambda: db.tasks_today(conn, today)) or []
     stale_domains = _preload(
         loaded, "stale_domains", lambda: _fallback_stale_domains(conn, now)
     ) or []
@@ -684,6 +719,7 @@ def collect_candidates(conn, now: datetime, *, preloaded=None) -> list[Candidate
         *_call_candidate(queue, {item.key for item in callbacks}, activity),
         *_follow_up_candidate(activity, now),
         *_partner_candidate(partner_rows),
+        *_task_candidates(task_rows, now),
         *_school_candidates(school_rows, now),
         *_school_meeting_candidate(school_meeting_rows, now),
         *_stale_candidates(stale_domains),
@@ -701,15 +737,17 @@ _MORNING_ROUTINE = {
     "follow_up_capture": 2,
     "proposal_decision": 3,
     "partner_action": 4,
-    "school_item": 5,
+    "task": 5,
+    "school_item": 6,
 }
 _EVENING_ROUTINE = {
     "school_item": 0,
     "proposal_decision": 1,
     "partner_action": 2,
-    "call_run": 3,
-    "follow_up_capture": 4,
-    "gym": 5,
+    "task": 3,
+    "call_run": 4,
+    "follow_up_capture": 5,
+    "gym": 6,
 }
 
 

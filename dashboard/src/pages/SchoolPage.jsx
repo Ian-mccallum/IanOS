@@ -206,7 +206,7 @@ export default function SchoolPage({ state, refresh, toast, onOpenSchoolNote }) 
         <section className="panel school-empty">
           <div className="panel-body">
             <h2>School is waiting on a local import.</h2>
-            <p className="dim">Import a Canvas calendar export to build your course briefing.</p>
+            <p className="dim">Import a Canvas .ics to see deadlines here</p>
           </div>
         </section>
       </div>
@@ -315,7 +315,7 @@ export default function SchoolPage({ state, refresh, toast, onOpenSchoolNote }) 
                   >
                     {activeCourse.next_meeting?.existing_session_id ? 'Resume next note'
                       : activeCourse.next_meeting ? `Start ${activeCourse.next_meeting.kind} note`
-                        : isAsyncCourse(activeCourse) ? 'Open async workspace'
+                        : isAsyncCourse(activeCourse) ? 'Open week'
                           : 'View notebook'}
                   </button>
                 </div>
@@ -394,7 +394,7 @@ export default function SchoolPage({ state, refresh, toast, onOpenSchoolNote }) 
           )}
         </div>
       </section>
-      {goals.length > 0 && <PillarGoalPanel pillar="school" title="School goals" goals={goals} refresh={refresh} toast={toast} />}
+      {goals.length > 0 && <PillarGoalPanel pillar="school" title="School goals" goals={goals} refresh={refresh} toast={toast} doneStates={new Set((state.meta?.done_states || []).map((s) => s.toLowerCase()))} />}
     </div>
   )
 }

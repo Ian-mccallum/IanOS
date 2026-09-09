@@ -14,6 +14,7 @@ import {
 } from './bodyHealth.js'
 import PillarGoalPanel from '../components/goals/PillarGoalPanel.jsx'
 import Garden from '../components/Garden.jsx'
+import PoopLog from '../components/PoopLog.jsx'
 import Sheet from '../components/Sheet.jsx'
 
 const DELIGHT = ['Let\'s go.', 'Another one.', 'Building the streak.', 'You showed up.']
@@ -667,7 +668,7 @@ export default function BodyPage({ state, refresh, toast }) {
                   {busy ? 'Saving…' : 'Confirm gym'}
                 </button>
               ) : (
-                <p className="dim">Weekend. Streak safe. Back Monday.</p>
+                <p className="dim">Weekend, streak safe</p>
               )}
               <AnimatePresence>
                 {burst > 0 && !rm && (
@@ -684,11 +685,11 @@ export default function BodyPage({ state, refresh, toast }) {
                 )}
               </AnimatePresence>
             </div>
-            <p className="gym-hint dim">
-              {trackDaysPerWeek === 7 ? 'Every day.' : 'Every weekday.'} Tap confirm when you&apos;re done.
-            </p>
+            <span className="chip chip-idle gym-hint">{trackDaysPerWeek === 7 ? 'every day' : 'weekdays'}</span>
           </div>
         </section>
+
+        <PoopLog toast={toast} />
 
         {montage && (
           <section className="panel montage-panel">
@@ -724,6 +725,7 @@ export default function BodyPage({ state, refresh, toast }) {
           refresh={refresh}
           toast={toast}
           variant="simple"
+          doneStates={new Set((state.meta?.done_states || []).map((s) => s.toLowerCase()))}
         />
       </div>
 

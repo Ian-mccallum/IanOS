@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 from core import db, partner, metrics
 
-PILLAR_ORDER = ("btc", "body", "partner", "school", "life", "money")
+PILLAR_ORDER = ("btc", "body", "partner", "school", "life", "learning", "money")
 
 PILLAR_META = {
     "btc": {"label": "Beat the Clock", "icon": "◆", "domains": ("business",)},
@@ -14,6 +14,7 @@ PILLAR_META = {
     "partner": {"label": "Partner", "icon": "♥", "domains": ("personal",)},
     "school": {"label": "School", "icon": "△", "domains": ("school", "college")},
     "life": {"label": "Life", "icon": "○", "domains": ("personal",)},
+    "learning": {"label": "Learning", "icon": "✎", "domains": ("personal",)},
     "money": {"label": "Money", "icon": "$", "domains": ("finance",)},
 }
 
@@ -33,6 +34,12 @@ def is_partner_goal(goal: dict) -> bool:
     return "#partner" in notes or "partner" in name
 
 
+def is_learning_goal(goal: dict) -> bool:
+    notes = (goal.get("notes") or "").lower()
+    name = (goal.get("name") or "").lower()
+    return "#learning" in notes or "learning:" in notes
+
+
 def goals_for_pillar(goals: list[dict], pillar: str) -> list[dict]:
     if pillar == "btc":
         return [g for g in goals if g.get("domain") == "business"]
@@ -45,7 +52,14 @@ def goals_for_pillar(goals: list[dict], pillar: str) -> list[dict]:
     if pillar == "partner":
         return [g for g in goals if g.get("domain") == "personal" and is_partner_goal(g)]
     if pillar == "life":
-        return [g for g in goals if g.get("domain") == "personal" and not is_partner_goal(g)]
+        return [
+            g for g in goals
+            if g.get("domain") == "personal"
+            and not is_partner_goal(g)
+            and not is_learning_goal(g)
+        ]
+    if pillar == "learning":
+        return [g for g in goals if g.get("domain") == "personal" and is_learning_goal(g)]
     return []
 
 
@@ -151,6 +165,11 @@ def compute_pillars(conn, goals: list[dict], focus: dict, partner_tasks: list[di
                 detail = "set dates"
         elif pid == "life":
             detail = f"{att} need attention" if att else "on track"
+        elif pid == "learning":
+            from core import learning as learning_mod
+            streak_state = learning_mod.compute(conn)
+            detail = f"{streak_state['streak']}d streak"
+            st = "ON TRACK"
         elif pid == "money":
             port = (fin or {}).get("portfolio")
             if port:

@@ -1,5 +1,6 @@
 """SPEC-v25 daytime chat API contracts."""
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -121,20 +122,46 @@ def test_turn_is_202_and_has_no_cooldown(client, monkeypatch):
     assert follow.status_code == 202
 
 
-def test_threads_for_different_agents_coexist(client, monkeypatch):
-    """One open thread per agent: a CFO thread does not close a Fury thread."""
+def test_threads_are_durable_and_reopenable(client, monkeypatch):
+    """SPEC-v40 §3: a second thread for the same agent leaves the first OPEN;
+    the list is newest-first with title/turn_count; a CLOSED thread refuses
+    turns (409) until reopened with a status-only PATCH."""
     monkeypatch.setattr(main, "_start_chat_turn_worker", lambda *_: None)
     fury = client.post("/api/chat/threads", json={"role": "chief"}).json()
     cfo = client.post("/api/chat/threads", json={"role": "cfo"}).json()
-    assert fury["role"] == "chief"
-    assert cfo["role"] == "cfo"
-    assert client.get(f"/api/chat/threads/{fury['id']}").json()["status"] == "OPEN"
-    assert client.get(f"/api/chat/threads/{cfo['id']}").json()["status"] == "OPEN"
-
-    # A second thread for the same agent retires the first.
+    assert fury["role"] == "chief" and cfo["role"] == "cfo"
     fury2 = client.post("/api/chat/threads", json={"role": "chief"}).json()
-    assert client.get(f"/api/chat/threads/{fury['id']}").json()["status"] == "CLOSED"
-    assert client.get(f"/api/chat/threads/{fury2['id']}").json()["status"] == "OPEN"
+    for tid in (fury["id"], cfo["id"], fury2["id"]):
+        assert client.get(f"/api/chat/threads/{tid}").json()["status"] == "OPEN"
+
+    # updated_at is second-resolution; age the untouched threads so the
+    # ordering assertion is about activity, not tie-breaking within a second.
+    conn = db.connect()
+    conn.execute(
+        "UPDATE chat_threads SET updated_at='2026-01-01 00:00:00' WHERE id IN (?, ?)",
+        (cfo["id"], fury2["id"]),
+    )
+    conn.commit()
+    conn.close()
+    client.post(f"/api/chat/threads/{fury['id']}/turns", json={"question": "Where is burn?"})
+    listed = client.get("/api/chat/threads").json()["threads"]
+    assert [t["id"] for t in listed][0] == fury["id"]          # newest activity first
+    first = listed[0]
+    assert first["title"] == "Where is burn?" and first["turn_count"] == 1
+    assert first["has_summary"] is False and first["compacted_at"] is None
+    assert "sdk_session_id" not in first and "summary" not in first
+
+    closed = client.patch(f"/api/chat/threads/{fury['id']}", json={"status": "CLOSED"})
+    assert closed.status_code == 200
+    refused = client.post(f"/api/chat/threads/{fury['id']}/turns", json={"question": "still there?"})
+    assert refused.status_code == 409
+    frozen = client.patch(f"/api/chat/threads/{fury['id']}", json={"effort": "low"})
+    assert frozen.status_code == 422
+    reopened = client.patch(f"/api/chat/threads/{fury['id']}", json={"status": "OPEN"})
+    assert reopened.status_code == 200 and reopened.json()["status"] == "OPEN"
+    detail = client.get(f"/api/chat/threads/{fury['id']}").json()
+    assert detail["title"] == "Where is burn?" and detail["summary"] == ""
+    assert "sdk_session_id" not in detail
 
 
 @pytest.mark.parametrize("role", ["nope", "", "ian", "archivist_typo"])
@@ -506,3 +533,163 @@ def test_startup_recovers_stale_chat_work_and_prunes_old_terminal_rows(client):
     assert recovered["status"] == "FAILED"
     assert recovered["error_code"] == "interrupted"
     assert pruned is None
+
+
+# ------------------------------------------------------------ SPEC-v40 §4
+# Memory and Compact.
+
+def _run_turns(client, thread_id: int, n: int, *, session_id: str = "sdk-PRIVATE") -> None:
+    for i in range(n):
+        created = client.post(f"/api/chat/threads/{thread_id}/turns", json={"question": f"q{i}"})
+        assert created.status_code == 202, created.text
+        main._run_chat_turn_worker(created.json()["id"])
+
+
+def _stub_compactor(monkeypatch, text: str):
+    calls: list[tuple[str, int]] = []
+
+    async def fake_summary(previous_summary, turns):
+        calls.append((previous_summary, len(turns)))
+        return text
+
+    monkeypatch.setattr(main, "_chat_thread_summary_reply", fake_summary)
+    return calls
+
+
+def test_compact_stores_a_bounded_summary_clears_the_session_and_keeps_turns(client, monkeypatch):
+    captured = {}
+
+    def fake_execute(conn, question, **kwargs):
+        captured.update(kwargs)
+        return _fake_chat_reply(session_id="sdk-PRIVATE")
+
+    monkeypatch.setattr(main, "_execute_chat_turn", fake_execute)
+    monkeypatch.setattr(main, "_start_chat_turn_worker", lambda invocation_id: None)
+    calls = _stub_compactor(monkeypatch, "Ian asked about burn — the agent said cut hosting.")
+    thread = _open_thread(client)
+    too_few = client.post(f"/api/chat/threads/{thread['id']}/compact")
+    assert too_few.status_code == 409
+    _run_turns(client, thread["id"], 4)
+
+    done = client.post(f"/api/chat/threads/{thread['id']}/compact")
+    assert done.status_code == 202, done.text
+    body = done.json()
+    assert body["summary"] == "Ian asked about burn, the agent said cut hosting."   # dash rewritten
+    assert body["summary_turn_count"] == 4 and body["compacted_at"]
+    assert "sdk_session_id" not in body
+    assert calls == [("", 4)]
+    conn = db.connect()
+    row = db.get_chat_thread(conn, thread["id"])
+    assert row["sdk_session_id"] == ""                       # fresh session next turn
+    assert db.chat_turn_count(conn, thread["id"]) == 4       # nothing deleted
+    assert conn.execute("SELECT COUNT(*) FROM memos").fetchone()[0] == 0
+    conn.close()
+    # Too few new turns for a second compact.
+    assert client.post(f"/api/chat/threads/{thread['id']}/compact").status_code == 409
+    # The next turn starts fresh and carries the summary as its history.
+    _run_turns(client, thread["id"], 1)
+    assert captured["session_id"] is None
+    assert captured["thread_summary"] == "Ian asked about burn, the agent said cut hosting."
+    detail = client.get(f"/api/chat/threads/{thread['id']}").json()
+    assert detail["summary_turn_count"] == 4 and len(detail["turns"]) == 5
+    listed = client.get("/api/chat/threads").json()["threads"][0]
+    assert listed["has_summary"] is True and "summary" not in listed
+
+
+def test_compact_refuses_execution_claims_and_in_flight_turns(client, monkeypatch):
+    monkeypatch.setattr(main, "_execute_chat_turn", lambda conn, q, **kw: _fake_chat_reply())
+    monkeypatch.setattr(main, "_start_chat_turn_worker", lambda invocation_id: None)
+    _stub_compactor(monkeypatch, "Done. I sent the email to the contractor.")
+    thread = _open_thread(client)
+    _run_turns(client, thread["id"], 4)
+    refused = client.post(f"/api/chat/threads/{thread['id']}/compact")
+    assert refused.status_code == 502
+    assert client.get(f"/api/chat/threads/{thread['id']}").json()["summary"] == ""
+    # A queued turn blocks Compact.
+    queued = client.post(f"/api/chat/threads/{thread['id']}/turns", json={"question": "wait"})
+    assert queued.status_code == 202
+    assert client.post(f"/api/chat/threads/{thread['id']}/compact").status_code == 409
+
+
+def test_auto_compact_fires_at_the_threshold_on_the_same_path(client, monkeypatch):
+    monkeypatch.setattr(main, "_execute_chat_turn", lambda conn, q, **kw: _fake_chat_reply())
+    monkeypatch.setattr(main, "_start_chat_turn_worker", lambda invocation_id: None)
+    monkeypatch.setattr(db, "CHAT_COMPACT_AUTO_TURNS", 4)
+    calls = _stub_compactor(monkeypatch, "Ian asked four things.")
+    thread = _open_thread(client)
+    _run_turns(client, thread["id"], 3)
+    assert calls == []
+    _run_turns(client, thread["id"], 1)
+    assert calls == [("", 4)]
+    detail = client.get(f"/api/chat/threads/{thread['id']}").json()
+    assert detail["summary"] == "Ian asked four things." and detail["summary_turn_count"] == 4
+
+
+def test_new_thread_hears_same_role_summaries_on_its_first_turn_only(client, monkeypatch):
+    captured = []
+
+    def fake_execute(conn, question, **kwargs):
+        captured.append(kwargs)
+        return _fake_chat_reply()
+
+    monkeypatch.setattr(main, "_execute_chat_turn", fake_execute)
+    monkeypatch.setattr(main, "_start_chat_turn_worker", lambda invocation_id: None)
+    conn = db.connect()
+    old_chief = db.create_chat_thread(conn, db.CHAT_DEFAULT_MODEL, role="chief")
+    db.create_chat_turn(conn, old_chief["id"], "Where is burn?", model=db.CHAT_DEFAULT_MODEL)
+    db.set_chat_thread_summary(conn, old_chief["id"], "Ian asked where burn stood.")
+    cfo = db.create_chat_thread(conn, db.CHAT_DEFAULT_MODEL, role="cfo")
+    db.set_chat_thread_summary(conn, cfo["id"], "CFO SECRET summary.")
+    conn.close()
+
+    fresh = client.post("/api/chat/threads", json={"role": "chief"}).json()
+    _run_turns(client, fresh["id"], 2)
+    first, second = captured
+    assert [e["title"] for e in first["earlier_threads"]] == ["Where is burn?"]
+    assert first["earlier_threads"][0]["summary"] == "Ian asked where burn stood."
+    assert "CFO SECRET" not in json.dumps(first["earlier_threads"])
+    assert second["earlier_threads"] == []
+
+
+def test_new_chat_summarizes_the_outgoing_thread_in_the_background(client, monkeypatch):
+    monkeypatch.setattr(main, "_execute_chat_turn", lambda conn, q, **kw: _fake_chat_reply())
+    monkeypatch.setattr(main, "_start_chat_turn_worker", lambda invocation_id: None)
+    queued: list[int] = []
+    monkeypatch.setattr(main, "_compact_outgoing_thread_in_background", queued.append)
+    short = _open_thread(client)
+    _run_turns(client, short["id"], 2)
+    client.post("/api/chat/threads", json={"role": short["role"]})
+    assert queued == []                                     # too little to summarize
+    long = client.post("/api/chat/threads", json={"role": "cfo"}).json()
+    _run_turns(client, long["id"], 4)
+    client.post("/api/chat/threads", json={"role": "cfo"})
+    assert queued == [long["id"]]
+
+
+def test_compactor_is_zero_tool_single_turn_and_model_pinned(monkeypatch):
+    captured = {}
+
+    class FakeResult:
+        is_error = False
+        result = "Ian asked; the agent answered."
+
+    def fake_options(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    async def fake_query(*, prompt, options):
+        captured["prompt"] = prompt
+        yield FakeResult()
+
+    monkeypatch.setattr(runner, "ClaudeAgentOptions", fake_options)
+    monkeypatch.setattr(runner, "ResultMessage", FakeResult)
+    monkeypatch.setattr(runner, "query", fake_query)
+    monkeypatch.setattr(runner, "find_cli", lambda: None)
+    turns = [{"question": "q1 PRIVATE", "body": "a1"}, {"question": "q2", "body": "a2"}]
+    out = asyncio.run(main._chat_thread_summary_reply("earlier S", turns))
+    assert out == "Ian asked; the agent answered."
+    assert captured["mcp_servers"] == {} and captured["tools"] == [] and captured["allowed_tools"] == []
+    assert set(captured["disallowed_tools"]) == {f"mcp__ianos__{n}" for n in runner.ALL_TOOLS}
+    assert captured["max_turns"] == 1 and captured["model"] == main.CHAT_COMPACT_MODEL
+    assert captured["max_budget_usd"] == main.CHAT_COMPACT_COST_CAP_USD
+    assert "earlier S" in captured["prompt"] and "q1 PRIVATE" in captured["prompt"]

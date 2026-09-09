@@ -585,7 +585,9 @@ def test_chat_composer_is_thumb_safe_and_does_not_choose_a_free_model():
     assert send, "chat send is not a 44px target"
     # The flex column must pin every non-scroller child, or chip rows
     # collapse around their own contents (osui traps table).
-    assert re.search(r"\.agent-chat\s*>\s*\.ac-dock\s*\{[^}]*flex:\s*0\s+0\s+auto", CSS)
+    # SPEC-v40: the flex column is .consult-panel (.agent-chat rendered nowhere).
+    assert re.search(r"\.consult-panel\s*>\s*\.ac-dock\s*\{[^}]*flex:\s*0\s+0\s+auto", CSS)
+    assert not re.search(r"\.agent-chat\s*[>{,.:]", CSS), "no rule may target the dead .agent-chat class"
     assert re.search(r"\.ac-stream\s*\{[^}]*overflow-y:\s*auto", CSS)
     assert "prefers-reduced-motion" in CSS
     for cond, body in _blocks(CSS):
@@ -737,7 +739,13 @@ def test_school_notes_have_a_real_fullscreen_writing_mode():
 def test_school_note_copy_is_direct_and_not_motivational():
     root = Path(__file__).resolve().parent.parent / "dashboard" / "src"
     page = (root / "pages" / "SchoolNotebookPage.jsx").read_text()
-    editor = (root / "components" / "school-notes" / "SchoolNoteEditor.jsx").read_text()
+    # The placeholder text moved into schema.js in 2026-09 when it became a
+    # Tiptap decoration instead of an element stacked over the prose; both
+    # files are the writing surface's copy as far as this rule is concerned.
+    editor = (
+        (root / "components" / "school-notes" / "SchoolNoteEditor.jsx").read_text()
+        + (root / "components" / "school-notes" / "schema.js").read_text()
+    )
 
     assert "Start typing." in editor
     for phrase in (
@@ -780,3 +788,57 @@ def test_school_note_hardening_keeps_controls_and_recovery_reachable():
     assert "body.school-note-editing .nav-mobile { visibility: hidden;" in CSS
     assert "body.school-note-fullscreen .school-note-mobile-actions" in CSS
     assert CSS.count("overflow-wrap: anywhere") >= 2
+
+
+def test_header_has_no_clock_or_focus_chips():
+    """SPEC-v41 §2.1/§2.5: the header strip (status dot, clock, focus chips,
+    the "Nd to client" countdown, "Agents ran Xm ago") is deleted outright,
+    not hidden, replaced by the day arc + agent pulse."""
+    app = (Path(__file__).resolve().parent.parent / "dashboard" / "src" / "App.jsx").read_text()
+    for banned in ("function Clock(", "function LastAgentRun(", "function FocusChips(", "daysToClient"):
+        assert banned not in app, f"{banned} still in App.jsx"
+    for selector in (r"\.clock\s*\{", r"\.focus-chip", r"\.countdown\s*\{",
+                      r"\.sys-dot\s*\{", r"\.agent-run-hint\s*\{"):
+        assert not re.search(selector, CSS), f"{selector} still in styles.css"
+
+
+def test_pulse_never_crit():
+    """SPEC-v41 §2.3: the pulse is on every page including Plan/Journal/The
+    Line, where --crit is banned; its worst state is --warn."""
+    js = (Path(__file__).resolve().parent.parent / "dashboard" / "src" / "lib" / "dayArc.js").read_text()
+    assert "crit" not in js
+
+
+_TAGLINE_PATTERNS = [
+    re.compile(r"\bone place for\b", re.I),
+    re.compile(r"\bone workspace\b", re.I),
+    re.compile(r"\bat a glance\b", re.I),
+    re.compile(r",\s*one\s+.*?\s+at a time", re.I),
+    re.compile(r"\bworkspace for the\b", re.I),
+    re.compile(r"\beverything else\b", re.I),
+]
+_TAGLINE_ARRAY_SUFFIXES = ("WHISPERS", "MOTTOS", "TAGLINES")
+
+
+def _strip_js_comments(text: str) -> str:
+    text = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)
+    text = re.sub(r"//[^\n]*", "", text)
+    return text
+
+
+def test_no_taglines():
+    """SPEC-v41 §3.3: the executable version of "no taglines" (osui skill,
+    CLAUDE.md anti-slop). A tripwire, not a linter, on the constructions that
+    have actually shipped here."""
+    root = Path(__file__).resolve().parent.parent / "dashboard" / "src"
+    offenders = []
+    for p in root.rglob("*.jsx"):
+        text = _strip_js_comments(p.read_text(encoding="utf-8"))
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for pattern in _TAGLINE_PATTERNS:
+                if pattern.search(line):
+                    offenders.append(f"{p.relative_to(root.parent.parent)}:{lineno}: {line.strip()}")
+            m = re.search(r"\b([A-Z_]+)\s*=\s*\[", line)
+            if m and m.group(1).endswith(_TAGLINE_ARRAY_SUFFIXES):
+                offenders.append(f"{p.relative_to(root.parent.parent)}:{lineno}: {line.strip()}")
+    assert not offenders, f"tagline constructions found: {offenders}"

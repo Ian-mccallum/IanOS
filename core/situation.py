@@ -166,6 +166,12 @@ def _expired_line(conn, today: date) -> str:
     return f"Expired, undecided: {text}"
 
 
+def _tasks_line(conn, today) -> str:
+    rows = db.tasks_today(conn, today.isoformat())
+    on_command = sum(1 for r in rows if r["priority"])
+    return f"Open tasks: {len(rows)} ({on_command} on Command)"
+
+
 def _proposal_lines(conn) -> list[str]:
     """The dead-loop fix (6.1): every producer sees the same open-proposal
     ledger it is told not to duplicate, not just the chief."""
@@ -212,6 +218,7 @@ def current_situation(conn, now: datetime) -> str:
         _deadlines_line(conn, today),
         _quotas_line(conn),
         _expired_line(conn, today),
+        _tasks_line(conn, today),
     ]
     lines.extend(_proposal_lines(conn))
     lines.extend(_act_lines(conn))

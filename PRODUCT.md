@@ -38,6 +38,11 @@ Ian reads this under time pressure. Copy is instrumentation, not prose.
 - **No aphoristic stacks.** Do not default to "solemn clause. Punchy denial."
   as the page rhythm. Say the fact once.
 - **Blunt over lyrical.** "Gym confirmed. 12 day streak" beats a metaphor.
+- **No taglines (SPEC-v41).** A page title stands alone; a second line exists
+  only to carry data (a count, a date) or an instruction with a verb, never
+  a description of the surface it sits on ("Your day at a glance", "One
+  workspace for the week"). `tests/test_mobile_ui.py::test_no_taglines` is
+  the executable form of this rule.
 
 ## Anti-references
 
@@ -55,7 +60,7 @@ Ian reads this under time pressure. Copy is instrumentation, not prose.
 3. **Two-minute sessions.** Every daily action (read brief, decide proposal,
    log calls) reachable without navigation, scroll, or mode-switching.
 4. **The agents are characters.** Role color and voice stay consistent across
-   memos, proposals, and the brief so Ian knows who's talking at a glance.
+   memos, proposals, and the brief so Ian always knows who's talking.
 5. **Instrumentation, not decoration.** Motion and glow communicate state
    change (new memo, decision recorded, meter moving) or they don't exist.
 6. **Privacy curtain before chrome.** On phone (and every device), the PWA

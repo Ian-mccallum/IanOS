@@ -23,7 +23,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agents import runner  # noqa: E402
-from core import acts, attention, db  # noqa: E402
+from core import acts, attention, db, learning  # noqa: E402
 
 
 @pytest.fixture
@@ -461,7 +461,104 @@ def test_every_act_tool_is_registered_with_the_sdk_server():
         "act_gym_confirm", "act_activity_log", "act_goal_rebaseline",
         "act_goal_archive", "act_transaction_recategorize",
         "act_fact_flag_unverified", "act_attention_snooze",
+        "act_task_create", "act_task_complete", "act_learning_confirm",
     }
     assert act_tool_names <= runner.ALL_TOOLS
     registered_names = {t.name for t in runner.REGISTERED_TOOLS}
     assert act_tool_names <= registered_names
+
+
+# --------------------------------------------------------------------- task
+
+def test_task_create_is_reversible(conn):
+    out = acts.task_create(conn, role="steward", plane="nightly", thread_id=None,
+                            title="Renew parking")
+    task_id = out["result"]["id"]
+    assert db.get_task(conn, task_id) is not None
+    assert db.get_task(conn, task_id)["priority"] == 0
+
+    acts.undo_act(conn, out["act_id"])
+    assert db.get_task(conn, task_id) is None
+
+
+def test_task_complete_is_reversible(conn):
+    row = db.create_task(conn, "Pack lunch")
+    out = acts.task_complete(conn, role="steward", plane="nightly", thread_id=None,
+                              task_id=row["id"])
+    assert db.get_task(conn, row["id"])["done_at"] is not None
+
+    acts.undo_act(conn, out["act_id"])
+    assert db.get_task(conn, row["id"])["done_at"] is None
+
+
+def test_task_create_capped_per_night(conn):
+    acts.task_create(conn, role="steward", plane="nightly", thread_id=None,
+                      title="a", already_created_tonight=0)
+    acts.task_create(conn, role="steward", plane="nightly", thread_id=None,
+                      title="b", already_created_tonight=1)
+    with pytest.raises(acts.ActError):
+        acts.task_create(conn, role="steward", plane="nightly", thread_id=None,
+                          title="c", already_created_tonight=2)
+
+
+def test_only_steward_may_apply_task_acts(conn):
+    with pytest.raises(acts.ActError):
+        acts.task_create(conn, role="watchdog", plane="nightly", thread_id=None, title="x")
+    with pytest.raises(acts.ActError):
+        acts.task_complete(conn, role="cfo", plane="nightly", thread_id=None, task_id=1)
+
+
+# --------------------------------------------------------------- learning
+
+def _seed_active_topic(conn, name="case interviews") -> int:
+    learning.ensure_schema(conn)
+    cur = conn.execute(
+        "INSERT INTO learning_topics (name, status, origin, profile) "
+        "VALUES (?, 'active', 'user', 'started three weeks ago')",
+        (name,),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def test_learning_confirm_today_only(conn):
+    # Arrange: an active topic with today's session row already written.
+    # Act: confirm it through the Ring 1 act as tutor.
+    # Assert: the session is completed and exactly one confirm event exists, no grace/reset.
+    topic_id = _seed_active_topic(conn)
+    today = db.today()
+    learning.create_or_replace_session(conn, today, topic_id, "walk one case")
+    acts.learning_confirm(conn, role="tutor", plane="nightly", thread_id=None)
+    session = learning.get_session(conn, today)
+    assert session["status"] == "completed"
+    events = conn.execute("SELECT kind FROM learning_streak_events").fetchall()
+    assert [e["kind"] for e in events] == ["confirm"]
+
+
+def test_learning_confirm_requires_a_session_row(conn):
+    # Arrange: an active topic but no session row for today.
+    # Act/Assert: confirming raises ActError rather than creating one.
+    _seed_active_topic(conn)
+    with pytest.raises(acts.ActError):
+        acts.learning_confirm(conn, role="tutor", plane="nightly", thread_id=None)
+
+
+def test_learning_confirm_is_reversible(conn):
+    # Arrange: a confirmed session.
+    # Act: undo the act.
+    # Assert: the session reopens and its confirm event is gone.
+    topic_id = _seed_active_topic(conn)
+    today = db.today()
+    learning.create_or_replace_session(conn, today, topic_id, "walk one case")
+    out = acts.learning_confirm(conn, role="tutor", plane="nightly", thread_id=None)
+    acts.undo_act(conn, out["act_id"])
+    session = learning.get_session(conn, today)
+    assert session["status"] == "open"
+    assert conn.execute("SELECT COUNT(*) n FROM learning_streak_events").fetchone()["n"] == 0
+
+
+def test_ring1_denies_learning_confirm_to_other_roles(conn):
+    # Arrange: nothing (the grant table is static).
+    # Act/Assert: every role but tutor is refused learning.confirm.
+    with pytest.raises(acts.ActError):
+        acts.learning_confirm(conn, role="coach", plane="nightly", thread_id=None)

@@ -17,6 +17,11 @@ const POPOVER_DESKTOP_MIN = 901
 // single instance's `open` would let sheet B's close wipe the class while
 // sheet A is still open; the counter only clears it at zero.
 let openSheetCount = 0
+// Open sheets, oldest first. Only the topmost one answers Escape: SPEC-v40
+// hoists chat's Context/Reasoning/Threads sheets to siblings of the open
+// conversation (itself a Sheet), so two are routinely open at once and one
+// keypress used to close both.
+const openSheetStack = []
 
 // `anchor` is either a React ref ({ current: HTMLElement | null }) or an
 // already-resolved DOMRect-like object. A ref has a `current` key, a plain
@@ -65,11 +70,19 @@ export default function Sheet({
 
   useEffect(() => {
     if (!open) return undefined
+    const token = {}
+    openSheetStack.push(token)
     const onKeyDown = (event) => {
-      if (event.key === 'Escape') onClose?.()
+      if (event.key !== 'Escape') return
+      if (openSheetStack[openSheetStack.length - 1] !== token) return
+      onClose?.()
     }
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      const at = openSheetStack.indexOf(token)
+      if (at >= 0) openSheetStack.splice(at, 1)
+    }
   }, [open, onClose])
 
   // The panel below fades in by animating element-level opacity (motion's

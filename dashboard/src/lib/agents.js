@@ -13,6 +13,7 @@ export const ROLE_COLORS = {
   infra: '#38bdf8', archivist: 'var(--muted)', chief: 'var(--accent)',
   lovebird: '#f472b6', advisor: '#c084fc', wealth: '#facc15',
   publicist: '#fb923c', coach: '#fca5a5', family: '#a3e635',
+  tutor: '#2dd4bf',
   ian: 'var(--ink)', system: 'var(--muted)',
 }
 
@@ -20,7 +21,7 @@ export const ROLE_GLYPHS = {
   scout: '◆', cfo: '$', physician: '✚', steward: '▤', watchdog: '⚠',
   counsel: '§', infra: '⌬', archivist: '❋', chief: '⬡',
   lovebird: '♥', advisor: '△', wealth: '◈', publicist: '✦',
-  coach: '◉', family: '○', ian: '●', system: '·',
+  coach: '◉', family: '○', tutor: '✎', ian: '●', system: '·',
 }
 
 export const roleColor = (role) => ROLE_COLORS[role] || 'var(--muted)'

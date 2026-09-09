@@ -877,9 +877,15 @@ def test_school_study_worker_is_zero_tool_and_rejects_bad_model_shapes(client, m
     assert discarded["status"] == "DISCARDED" and discarded["output"] is None
 
 
-def test_school_study_course_prohibition_is_enforced_server_side(client, monkeypatch):
-    # Arrange: the UI will show a block, but an API caller must not be able to
-    # bypass an explicit syllabus prohibition by posting the endpoint directly.
+def test_a_course_ai_policy_does_not_gate_study_tools(client, monkeypatch):
+    """Ian, 2026-09-09: a syllabus AI policy no longer blocks his study aids.
+
+    Study aids are built from his own notes for his own revision, and which
+    course they came from is not the machine's call. Consent is still the
+    gate, and it is the only one: this test exists to prove the course policy
+    stopped mattering WITHOUT the consent wall quietly going with it.
+    """
+    # Arrange: the strictest possible policy on the course.
     session = _saved_study_session(client)
     monkeypatch.setattr(main, "_start_school_study_worker", lambda _artifact_id: None)
     conn = db.connect()
@@ -889,20 +895,29 @@ def test_school_study_course_prohibition_is_enforced_server_side(client, monkeyp
     )
     conn.commit()
     conn.close()
-    assert client.patch("/api/school/ai/settings", json={"enabled": True}).status_code == 200
 
-    # Act.
-    response = client.post(
+    # Act 1: consent off. Still refused, and for the consent reason.
+    assert client.patch("/api/school/ai/settings", json={"enabled": False}).status_code == 200
+    denied = client.post(
+        f"/api/school/note-sessions/{session['id']}/study-artifacts", json={"kind": "summary"},
+    )
+    assert denied.status_code == 422
+    assert "study mode" in denied.json()["detail"]
+    conn = db.connect()
+    assert conn.execute("SELECT COUNT(*) FROM school_study_artifacts").fetchone()[0] == 0
+    conn.close()
+
+    # Act 2: consent on. The prohibited course is now allowed through.
+    assert client.patch("/api/school/ai/settings", json={"enabled": True}).status_code == 200
+    allowed = client.post(
         f"/api/school/note-sessions/{session['id']}/study-artifacts", json={"kind": "summary"},
     )
 
-    # Assert: no queued artifact exists and the error still gets private-cache
-    # protection from the School route-prefix middleware.
-    assert response.status_code == 422
-    assert response.headers["cache-control"] == "no-store"
-    assert "not permitted" in response.json()["detail"]
+    # Assert: queued, and the route still carries its private-cache header.
+    assert allowed.status_code in (200, 201, 202), allowed.json()
+    assert allowed.headers["cache-control"] == "no-store"
     conn = db.connect()
-    assert conn.execute("SELECT COUNT(*) FROM school_study_artifacts").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM school_study_artifacts").fetchone()[0] == 1
     conn.close()
 
 
@@ -1160,3 +1175,149 @@ def test_a_no_op_title_save_does_not_stale_an_accepted_study_aid(client, monkeyp
         assert status == "ACCEPTED", f"a no-op title save STALEd an accepted aid ({status})"
     finally:
         conn.close()
+
+
+def test_class_note_text_reaches_only_an_attended_watchdog_consult(conn, monkeypatch):
+    """Law A1: the plane is a property of the run, never of the tool args.
+
+    A nightly run (no `plane`) never sees note text, whatever it asks for;
+    an attended consult (plane B) does, but only for watchdog and only with
+    study mode on. The course's own AI policy stopped filtering this in
+    2026-09; consent, role and plane are the gates that remain.
+    """
+    _freeze_school_today(monkeypatch)
+    school.seed_inventory(conn, _schedule_inventory())
+    stat_item = school.note_launches_for_date(conn, "2026-08-24")[0]["school_item_id"]
+    stat, _ = school.open_note_session(conn, stat_item)
+    school.update_note_session(
+        conn, stat["id"], document=_school_note_doc("PRIVATE NOTE sample space"),
+        expected_revision=stat["revision"],
+    )
+    bus_item = school.note_launches_for_date(conn, "2026-08-25")[0]["school_item_id"]
+    bus, _ = school.open_note_session(conn, bus_item)
+    school.update_note_session(
+        conn, bus["id"], document=_school_note_doc("PRIVATE NOTE forbidden course"),
+        expected_revision=bus["revision"],
+    )
+    conn.execute(
+        "UPDATE school_courses SET policy_json=? WHERE code='BUS 120'",
+        (json.dumps({"ai_policy": {"status": "prohibited"}}),),
+    )
+    conn.commit()
+
+    def call(role, plane, **args):
+        runner.RUN.update(role=role, conn=conn, role_domains=["all"])
+        runner.RUN.pop("plane", None)
+        if plane:
+            runner.RUN["plane"] = plane
+        return json.dumps(asyncio.run(runner.read_school.handler({"days": 7, **args})))
+
+    # Consent off: an attended watchdog gets an explicit unavailable marker.
+    school.set_school_ai_enabled(conn, False)
+    off = call("watchdog", "B", notes=True)
+    assert "PRIVATE NOTE" not in off and "notes_unavailable" in off
+
+    school.set_school_ai_enabled(conn, True)
+    # Nightly (no plane) never sees text, even when asked.
+    nightly = call("watchdog", None, notes=True)
+    assert "PRIVATE NOTE" not in nightly and "notes" not in json.loads(
+        json.loads(nightly)["content"][0]["text"]
+    )
+    # Attended, but the wrong role (chief gets aggregates only).
+    chief = call("chief", "B", notes=True)
+    assert "PRIVATE NOTE" not in chief
+    # Attended watchdog: every course's text. A course AI policy stopped
+    # filtering this in 2026-09; consent, role and plane are the only gates.
+    attended = json.loads(json.loads(call("watchdog", "B", notes=True))["content"][0]["text"])
+    texts = sorted(n["text"] for n in attended["notes"])
+    assert texts == ["PRIVATE NOTE forbidden course", "PRIVATE NOTE sample space"]
+    assert all(set(n) == {"course_code", "session_date", "title", "text"} for n in attended["notes"])
+    # Narrowed to one course, and an unknown course is an error, not a crash.
+    only = json.loads(json.loads(call("watchdog", "B", notes=True, course="STAT 120"))["content"][0]["text"])
+    assert [n["course_code"] for n in only["notes"]] == ["STAT 120"]
+    unknown = json.loads(json.loads(call("watchdog", "B", notes=True, course="NOPE 1"))["content"][0]["text"])
+    assert unknown["notes"] == [] and unknown["notes_error"]
+    # The metadata snapshot itself is unchanged and still carries no text.
+    plain = call("watchdog", "B")
+    assert "PRIVATE NOTE" not in plain
+
+
+# ------------------------------------------------- Ian's 2026-09-09 requests
+
+def test_the_course_rail_is_ordered_by_the_next_class_not_the_alphabet(conn, monkeypatch):
+    """Whatever meets soonest is first, and a course with no meetings is last.
+
+    The rail used to be `ORDER BY code`, which put an asynchronous course
+    ahead of the lecture starting in an hour.
+    """
+    _freeze_school_today(monkeypatch)
+    school.seed_inventory(conn, _schedule_inventory())
+    snapshot = school.dashboard_snapshot(conn)
+    codes = [c["code"] for c in snapshot["courses"]]
+    starts = [(c.get("next_meeting") or {}).get("start_at") for c in snapshot["courses"]]
+
+    timed = [s for s in starts if s]
+    assert timed == sorted(timed), f"courses are not in next-meeting order: {codes}"
+    # Every course that meets comes before every course that does not.
+    first_async = next((i for i, s in enumerate(starts) if not s), len(starts))
+    assert all(s for s in starts[:first_async])
+    assert not any(s for s in starts[first_async:])
+
+
+def _note_with_text(conn, text):
+    item = school.note_launches_for_date(conn, "2026-08-24")[0]["school_item_id"]
+    session, _ = school.open_note_session(conn, item)
+    school.update_note_session(
+        conn, session["id"], document=_school_note_doc(text),
+        expected_revision=session["revision"],
+    )
+    return session
+
+
+def test_search_finds_a_word_past_the_preview_and_says_where(conn, monkeypatch):
+    """Ian, 2026-09-09: search the whole notebook, not the card's preview.
+
+    The card preview is the first 280 characters, so the old client-side
+    filter could not see a word written later in the lecture at all.
+    """
+    _freeze_school_today(monkeypatch)
+    school.seed_inventory(conn, _schedule_inventory())
+    filler = "padding sentence about nothing in particular. " * 12
+    session = _note_with_text(conn, f"{filler}consumer surplus is the gap")
+    assert len(filler) > 280, "the fixture must push the term past the preview"
+
+    hit = school.list_note_sessions(conn, session["course_code"], q="surplus")
+    assert [row["id"] for row in hit] == [session["id"]]
+    assert hit[0]["match_count"] == 1
+    assert hit[0]["matches"][0]["match"] == "surplus"
+    assert "consumer" in hit[0]["matches"][0]["before"]
+
+    # Case-insensitive, and the snippet keeps the text as it was written.
+    upper = school.list_note_sessions(conn, session["course_code"], q="SURPLUS")
+    assert upper[0]["matches"][0]["match"] == "surplus"
+
+    # A term that appears nowhere returns nothing rather than everything.
+    assert school.list_note_sessions(conn, session["course_code"], q="zzzzz") == []
+
+
+def test_a_typed_wildcard_searches_for_itself(conn, monkeypatch):
+    """`%` is a LIKE wildcard. Unescaped, typing one returned every note in
+    the course, which reads as a broken search rather than as SQL."""
+    _freeze_school_today(monkeypatch)
+    school.seed_inventory(conn, _schedule_inventory())
+    session = _note_with_text(conn, "a note with no percent sign")
+    assert school.list_note_sessions(conn, session["course_code"], q="%") == []
+    assert school.list_note_sessions(conn, session["course_code"], q="_") == []
+
+
+def test_every_match_carries_its_own_context(conn, monkeypatch):
+    _freeze_school_today(monkeypatch)
+    school.seed_inventory(conn, _schedule_inventory())
+    session = _note_with_text(conn, "surplus early. " + ("filler. " * 30) + "surplus late.")
+    row = school.list_note_sessions(conn, session["course_code"], q="surplus")[0]
+    assert row["match_count"] == 2
+    assert len(row["matches"]) == 2
+    # Two hits far apart must not report the same sentence twice.
+    assert row["matches"][0]["after"] != row["matches"][1]["after"]
+    # The tail flag is what lets the UI show an ellipsis without guessing.
+    assert row["matches"][0]["tail"] is True

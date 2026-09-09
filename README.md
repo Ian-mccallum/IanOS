@@ -12,7 +12,7 @@ Every night a dispatcher decides which agents wake. Each agent reads only the ta
 
 Agents have three verbs: READ, MEMO, PROPOSE. A proposal sits PENDING until a person approves or rejects it, and approval is inert: it records a decision, it never sends, spends or deletes anything.
 
-Around that core sits a full product: six life pillars, a day plan with two-way iCloud sync, a deterministic cold-call queue with a self-writing script, a private journal no agent can read, class notes with consent-gated study aids, and an agent chat that is a separate read-only boundary.
+Around that core sits a full product: seven life pillars, a day plan with two-way iCloud sync, a deterministic cold-call queue with a self-writing script, a private journal no agent can read, class notes with consent-gated study aids, and an agent chat that is a separate read-only boundary.
 
 ## What it looks like
 

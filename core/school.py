@@ -774,8 +774,64 @@ def school_note_session(conn, session_id: int, *, include_document: bool = True)
     return _school_note_session(conn, session_id, include_document=include_document)
 
 
+# How much of the sentence around a hit comes back with it. Enough to tell
+# "consumer surplus" from "producer surplus" at a glance, short enough that
+# three of them still fit under one row in the sessions rail.
+_NOTE_MATCH_PAD = 70
+_NOTE_MATCH_SNIPPETS = 3
+
+
+def _like_escaped(value: str) -> str:
+    r"""Escape LIKE wildcards so a typed % or _ searches for itself.
+
+    Without this, typing a single `%` matches every note in the course, which
+    reads as "search is broken" rather than "that is what % means".
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _note_match_snippets(text: str, query: str) -> tuple[int, list[dict]]:
+    """Every hit's surrounding context, split so the UI never does offset math.
+
+    Returns (total hits, up to _NOTE_MATCH_SNIPPETS of
+    {before, match, after, head, tail}) where `match` is the text as it was
+    actually written, not as it was typed, and head/tail say whether the
+    snippet was cut so the caller can render an ellipsis without guessing.
+    """
+    if not text or not query:
+        return 0, []
+    haystack = text.lower()
+    needle = query.lower()
+    starts: list[int] = []
+    cursor = haystack.find(needle)
+    while cursor != -1:
+        starts.append(cursor)
+        cursor = haystack.find(needle, cursor + len(needle))
+    snippets = []
+    for start in starts[:_NOTE_MATCH_SNIPPETS]:
+        end = start + len(needle)
+        left = max(0, start - _NOTE_MATCH_PAD)
+        right = min(len(text), end + _NOTE_MATCH_PAD)
+        snippets.append({
+            "before": text[left:start].lstrip() if left else text[left:start],
+            "match": text[start:end],
+            "after": text[end:right].rstrip() if right < len(text) else text[end:right],
+            "head": left > 0,
+            "tail": right < len(text),
+        })
+    return len(starts), snippets
+
+
 def list_note_sessions(conn, course_code: object, *, q: object = "", limit: int = 160) -> list[dict]:
-    """Return one course's timeline cards, intentionally without full docs."""
+    """Return one course's timeline cards, intentionally without full docs.
+
+    With `q`, this is the notebook's find-in-all-notes (Ian, 2026-09-09). The
+    SQL already searched the whole `plain_text`; what was missing was any way
+    to SEE the hit, so a word 300 characters into a lecture matched a row
+    whose 280-character preview did not contain it and the search looked
+    broken. Each row now carries its own match count and snippets. Still no
+    document JSON: a timeline card never needs one.
+    """
     ensure_schema(conn)
     course = _ensure_school_course(conn, course_code)
     query = _clean_text(q, 160)
@@ -783,14 +839,83 @@ def list_note_sessions(conn, course_code: object, *, q: object = "", limit: int 
     where = ["n.course_code=?", "n.deleted_at IS NULL"]
     params: list[object] = [course["code"]]
     if query:
-        where.append("(n.title LIKE ? OR n.plain_text LIKE ?)")
-        params.extend([f"%{query}%", f"%{query}%"])
+        pattern = f"%{_like_escaped(query)}%"
+        where.append(r"(n.title LIKE ? ESCAPE '\' OR n.plain_text LIKE ? ESCAPE '\')")
+        params.extend([pattern, pattern])
     rows = conn.execute(
         _SCHOOL_NOTE_SELECT
         + f" WHERE {' AND '.join(where)} ORDER BY n.session_date DESC, n.id DESC LIMIT ?",
         (*params, safe_limit),
     ).fetchall()
-    return [_school_note_row(row, include_document=False) for row in rows]
+    results = [_school_note_row(row, include_document=False) for row in rows]
+    if not query:
+        return results
+    for result, row in zip(results, rows):
+        count, snippets = _note_match_snippets(row["plain_text"] or "", query)
+        result["match_count"] = count
+        result["matches"] = snippets
+        result["title_match"] = query.lower() in (result["title"] or "").lower()
+    return results
+
+
+# Cap on note text handed to an attended consult in one call. Notes are
+# lecture-sized (a few KB each); this is enough for a week of one course and
+# keeps a runaway "read everything" call from being a prompt-stuffing vector.
+AGENT_NOTE_TEXT_CAP = 16_000
+
+
+def agent_note_texts(conn, *, course_code: object = None, days: int = 14,
+                     max_chars: int = AGENT_NOTE_TEXT_CAP) -> dict:
+    """Plain text of Ian's recent class notes for an ATTENDED consult only.
+
+    Two gates, both in code, neither in the UI or a prompt:
+      1. Study mode (`school_ai_settings.enabled`) must be on. It is the same
+         consent row that gates study aids; off means an empty result, not an
+         error, so a nightly caller can never learn whether notes exist.
+      2. The caller decides the plane. This function never checks it; the
+         `read_school` tool does (Law A1: capability follows attendance) and
+         is the only agent-facing caller. Nightly runs never reach here.
+
+    Returns `{"consent": bool, "notes": [...], "truncated": bool}`. Each note
+    is course_code / session_date / title / text only: no ids, no document
+    JSON, no asset keys, no Canvas identifiers.
+    """
+    ensure_schema(conn)
+    if not school_ai_settings(conn)["enabled"]:
+        return {"consent": False, "notes": [], "truncated": False}
+    safe_days = max(1, min(int(days or 14), 120))
+    since = (date.today() - timedelta(days=safe_days)).isoformat()
+    where = ["n.deleted_at IS NULL", "n.session_date >= ?", "length(n.plain_text) > 0"]
+    params: list[object] = [since]
+    if course_code:
+        course = _ensure_school_course(conn, course_code)
+        where.append("n.course_code=?")
+        params.append(course["code"])
+    rows = conn.execute(
+        _SCHOOL_NOTE_SELECT
+        + f" WHERE {' AND '.join(where)} ORDER BY n.session_date DESC, n.id DESC LIMIT 60",
+        params,
+    ).fetchall()
+    notes: list[dict] = []
+    used = 0
+    truncated = False
+    for row in rows:
+        text = row["plain_text"] or ""
+        room = max(0, int(max_chars) - used)
+        if room <= 0:
+            truncated = True
+            break
+        if len(text) > room:
+            text = text[:room]
+            truncated = True
+        used += len(text)
+        notes.append({
+            "course_code": row["course_code"],
+            "session_date": row["session_date"],
+            "title": row["title"],
+            "text": text,
+        })
+    return {"consent": True, "notes": notes, "truncated": truncated}
 
 
 _SCHOOL_NOTE_UNSET = object()
@@ -904,16 +1029,6 @@ def _school_study_kind(value: object) -> str:
     return kind
 
 
-def _school_course_blocks_study(conn, course_code: str) -> bool:
-    """Keep an explicit course-level prohibition server-enforced, not UI-only."""
-    row = conn.execute(
-        "SELECT policy_json FROM school_courses WHERE code=?", (course_code,)
-    ).fetchone()
-    policy = _json(row["policy_json"], {}) if row is not None else {}
-    ai_policy = policy.get("ai_policy") if isinstance(policy, dict) else {}
-    return isinstance(ai_policy, dict) and ai_policy.get("status") == "prohibited"
-
-
 def _school_ai_settings_row(row) -> dict:
     data = dict(row) if row is not None else {}
     return {
@@ -1018,8 +1133,6 @@ def create_school_study_artifact(conn, session_id: object, kind: object, *, mode
     session = _school_note_session(conn, parsed_id, include_document=True)
     if session is None:
         raise SchoolNoteNotFoundError("class note not found")
-    if _school_course_blocks_study(conn, session["course_code"]):
-        raise SchoolStudyValidationError("study tools are not permitted for this course")
     # The plain-text projection is server-derived during autosave. A blank
     # document is not useful model context and must never become a filler prompt.
     if not str(session.get("plain_text") or "").strip():
@@ -2405,6 +2518,18 @@ def dashboard_snapshot(conn, days: int = 14) -> dict:
         meetings_by_course.setdefault(meeting["course_code"], []).append(meeting)
     for course in courses:
         course["next_meeting"] = (meetings_by_course.get(course["code"]) or [None])[0]
+    # Ian, 2026-09-09: the rail reads as a week, not an address book. Whatever
+    # meets soonest is first, so today's classes sit at the top in time order
+    # and the list walks forward from there. `next_note_launches` starts at
+    # today 00:00, so a class that already met today stays ahead of tomorrow's
+    # instead of jumping to the back the moment it ends. A course with no
+    # meetings at all (asynchronous online) has nothing to sort by and lands
+    # last, alphabetically among its own kind.
+    courses.sort(key=lambda c: (
+        0 if c.get("next_meeting") else 1,
+        (c.get("next_meeting") or {}).get("start_at") or "",
+        c["code"],
+    ))
     return {
         "term": TERM,
         "today": today,

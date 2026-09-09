@@ -2,6 +2,12 @@
 
 **Status:** QUEUED. No implementation is authorized by this document alone.
 
+> **Superseded in one place (Ian, 2026-09-09).** §8 "Course policies win" and
+> the `prohibited` rejection in §551 no longer describe the build: a course's
+> AI policy does not gate study tools, and `_school_course_blocks_study` is
+> deleted. Study-mode consent (`school_ai_settings`) is the only wall, and it
+> is unchanged. Read CLAUDE.md's School section for current behaviour.
+
 **Date:** 2026-08-30  
 **Owner:** Ian  
 **Audience:** Ian and the implementing agent  

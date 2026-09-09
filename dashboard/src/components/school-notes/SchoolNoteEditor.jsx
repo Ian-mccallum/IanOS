@@ -7,7 +7,7 @@ import { EditorContent, useEditor } from '@tiptap/react'
 // code. The node/mark set lives in schema.js so a React-free test can build
 // the real schema and diff it against core/school.py's server allowlist; read
 // that file before changing what this editor can produce.
-import { SCHOOL_EXTENSIONS } from './schema.js'
+import { NOTE_PLACEHOLDER, SCHOOL_EXTENSIONS } from './schema.js'
 
 const EMPTY_DOCUMENT = { type: 'doc', content: [{ type: 'paragraph' }] }
 
@@ -46,7 +46,7 @@ export default function SchoolNoteEditor({
   document,
   onChange,
   autoFocus = false,
-  placeholder = 'Start typing.',
+  placeholder = NOTE_PLACEHOLDER,
 }) {
   const onChangeRef = useRef(onChange)
   const lastEmittedRef = useRef(stableDocument(document))
@@ -60,6 +60,7 @@ export default function SchoolNoteEditor({
       attributes: {
         class: 'school-note-prose',
         'aria-label': 'Class note',
+        'data-note-placeholder': placeholder,
         autocorrect: 'on',
         autocapitalize: 'sentences',
         spellcheck: 'true',
@@ -92,6 +93,20 @@ export default function SchoolNoteEditor({
     if (!chain) return
     if (value === 'paragraph') chain.setParagraph().run()
     else chain.toggleHeading({ level: Number(value.slice(-1)) }).run()
+  }, [editor])
+
+  const indent = useCallback(() => {
+    const chain = editor?.chain().focus()
+    if (!chain) return
+    if (editor.isActive('taskItem')) chain.sinkListItem('taskItem').run()
+    else chain.sinkListItem('listItem').run()
+  }, [editor])
+
+  const outdent = useCallback(() => {
+    const chain = editor?.chain().focus()
+    if (!chain) return
+    if (editor.isActive('taskItem')) chain.liftListItem('taskItem').run()
+    else chain.liftListItem('listItem').run()
   }, [editor])
 
   const insert = useCallback((command) => {
@@ -134,6 +149,12 @@ export default function SchoolNoteEditor({
             <ToolButton label="Bullet list" toggle active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}><span aria-hidden="true">•≡</span></ToolButton>
             <ToolButton label="Numbered list" toggle active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}><span aria-hidden="true">1≡</span></ToolButton>
             <ToolButton label="Checklist" toggle active={editor.isActive('taskList')} onClick={() => editor.chain().focus().toggleTaskList().run()}><span aria-hidden="true">☑</span></ToolButton>
+            <ToolButton label="Outdent" onClick={() => outdent()}><span aria-hidden="true">⇤</span></ToolButton>
+            <ToolButton label="Indent" onClick={() => indent()}><span aria-hidden="true">⇥</span></ToolButton>
+          </div>
+          <ToolDivider />
+          <div className="school-note-tool-group" aria-label="Clear">
+            <ToolButton label="Clear formatting" onClick={() => editor.chain().focus().unsetAllMarks().clearNodes().run()}><span aria-hidden="true">⌫T</span></ToolButton>
           </div>
         </div>
         <ToolDivider />
@@ -148,7 +169,6 @@ export default function SchoolNoteEditor({
       </div>
       <div className="school-note-editor-surface">
         <EditorContent editor={editor} />
-        {editor.isEmpty && <p className="school-note-placeholder" aria-hidden="true">{placeholder}</p>}
       </div>
     </div>
   )

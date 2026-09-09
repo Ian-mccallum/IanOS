@@ -24,10 +24,13 @@ def test_prefs_default_to_sonnet_and_reject_other_models(conn):
         db.set_chat_prefs_model(conn, "claude-opus-4")
 
 
-def test_create_thread_closes_other_open_and_validates_chips(conn):
+def test_create_thread_keeps_siblings_open_and_validates_chips(conn):
+    """SPEC-v40 §3.1: threads are durable. A second thread for the same role
+    leaves the first OPEN (SPEC-v26's auto-close is repealed); a CLOSED
+    thread accepts exactly one patch, reopening, and nothing else."""
     first = db.create_chat_thread(conn, db.CHAT_DEFAULT_MODEL)
     second = db.create_chat_thread(conn, "claude-haiku-4-5")
-    assert db.get_chat_thread(conn, first["id"])["status"] == "CLOSED"
+    assert db.get_chat_thread(conn, first["id"])["status"] == "OPEN"
     assert second["status"] == "OPEN"
     # SPEC-v37 2.7: Files is granted by default on every new thread.
     assert second["granted_chips"] == ["files"]
@@ -38,6 +41,25 @@ def test_create_thread_closes_other_open_and_validates_chips(conn):
     db.patch_chat_thread(conn, second["id"], status="CLOSED")
     with pytest.raises(ValueError):
         db.patch_chat_thread(conn, second["id"], model="claude-haiku-4-5")
+    with pytest.raises(ValueError):
+        db.patch_chat_thread(conn, second["id"], status="OPEN", effort="low")
+    reopened = db.patch_chat_thread(conn, second["id"], status="OPEN")
+    assert reopened["status"] == "OPEN"
+    assert db.patch_chat_thread(conn, second["id"], effort="low")["effort"] == "low"
+
+
+def test_thread_title_is_the_first_question_and_lists_carry_counts(conn):
+    thread = db.create_chat_thread(conn, "claude-sonnet-5")
+    assert thread["title"] == ""
+    long_q = "Review my SPAN 210 notes from this week and tell me what looks thin before the quiz"
+    db.create_chat_turn(conn, thread["id"], long_q, model="claude-sonnet-5")
+    db.create_chat_turn(conn, thread["id"], "second question never retitles", model="claude-sonnet-5")
+    row = db.get_chat_thread(conn, thread["id"])
+    assert row["title"].startswith("Review my SPAN 210 notes from this week and tell me")
+    assert row["title"].endswith("…") and len(row["title"]) <= db.CHAT_THREAD_TITLE_CHARS + 1
+    [listed] = db.list_chat_threads(conn)
+    assert listed["turn_count"] == 2 and listed["has_summary"] is False
+    assert listed["title"] == row["title"]
 
 
 def test_turns_require_open_thread_and_copy_model(conn):
@@ -84,9 +106,18 @@ def test_prune_deletes_old_chat_turns_and_empty_threads_not_memos(conn):
         (thread["id"],),
     )
     conn.commit()
+    # SPEC-v40 §3.4: a compacted thread outlives its turns; its summary is
+    # the memory a future thread with this agent receives.
+    kept = db.create_chat_thread(conn, "claude-sonnet-5")
+    conn.execute(
+        "UPDATE chat_threads SET updated_at='2020-01-01 00:00:00', summary='we agreed X' WHERE id=?",
+        (kept["id"],),
+    )
+    conn.commit()
     db.prune_agent_invocations(conn, older_than_days=7)
     assert db.get_agent_invocation(conn, turn["id"]) is None
     assert db.get_chat_thread(conn, thread["id"]) is None
+    assert db.get_chat_thread(conn, kept["id"])["summary"] == "we agreed X"
     memos = conn.execute("SELECT topic FROM memos WHERE topic='keep-me'").fetchall()
     assert len(memos) == 1
 
@@ -247,3 +278,23 @@ def test_in_flight_guard_replaces_the_cooldown(conn):
     assert db.chat_turn_in_flight(conn, thread["id"]) is True
     db.finish_agent_invocation_success(conn, turn["id"], "body", [], "m", 1, 0.0)
     assert db.chat_turn_in_flight(conn, thread["id"]) is False
+
+
+def test_dumbledore_threads_open_with_school_on(conn):
+    """A role whose beat lives behind one source chip opens with it granted.
+    Every other role still opens with Files alone (SPEC-v37 2.7)."""
+    watchdog = db.create_chat_thread(conn, db.CHAT_DEFAULT_MODEL, role="watchdog")
+    assert watchdog["granted_chips"] == ["school", "files"]  # registry order
+    steward = db.create_chat_thread(conn, db.CHAT_DEFAULT_MODEL, role="steward")
+    assert steward["granted_chips"] == ["files"]
+
+
+def test_threads_that_predate_titles_are_backfilled_from_their_first_question(conn):
+    thread = db.create_chat_thread(conn, "claude-sonnet-5")
+    db.create_chat_turn(conn, thread["id"], "Where is burn this month?", model="claude-sonnet-5")
+    empty = db.create_chat_thread(conn, "claude-sonnet-5")
+    conn.execute("UPDATE chat_threads SET title=''")
+    conn.commit()
+    db.run_migrations(conn)
+    assert db.get_chat_thread(conn, thread["id"])["title"] == "Where is burn this month?"
+    assert db.get_chat_thread(conn, empty["id"])["title"] == ""

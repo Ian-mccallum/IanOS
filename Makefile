@@ -110,6 +110,11 @@ import-canvas:
 	@test -n "$(FILE)" || (echo "Usage: make import-canvas FILE=/absolute/path/to/calendarfeed.ics"; exit 2)
 	$(PY) ingest/import_canvas_calendar.py $(FILE)
 
+## Reload data/fall_2026_school_seed.json alone (deadlines Canvas never sent).
+## Touches the syllabus + schedule providers only; Canvas items are untouched.
+sync-syllabus:
+	$(PY) ingest/import_canvas_calendar.py --seed-only
+
 ## Pull the live Canvas calendar feed (needs CANVAS_ICS_URL in .env, SPEC-v32
 ## Part C). The feed URL is a bearer secret and never appears in argv, logs,
 ## or any agent-visible surface; make import-canvas remains for manual snapshots.
@@ -168,7 +173,8 @@ sync-load:
 test:
 	$(PY) -m pytest tests/ -q
 
-## Rebuild the scrubbed public mirror in ../ianOS-public and commit it there
+## Rebuild the scrubbed public mirror in ../ianOS-public (local dir name only; the
+## GitHub repo is Ian-mccallum/ianOS) and commit it there
 ## (SPEC-v39). Push from that directory. The script and its rule table stay private.
 EXPORT_MSG ?= Refresh public mirror
 export-public:

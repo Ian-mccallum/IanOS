@@ -80,3 +80,23 @@ test('the editor still supports everything its toolbar offers', () => {
     assert.ok(editorMarks.has(mark), `toolbar offers ${mark} but the schema lost it`)
   }
 })
+
+// Ian, 2026-09-09: two shortcuts and a placeholder joined the extension list.
+// None of them may widen what the editor can put in a document.
+test('the placeholder and the shortcuts add no node and no mark', () => {
+  const bare = getSchema([
+    ...SCHOOL_EXTENSIONS.filter((e) => !['placeholder', 'schoolShortcuts'].includes(e.name)),
+  ])
+  assert.deepEqual(Object.keys(schema.nodes).sort(), Object.keys(bare.nodes).sort())
+  assert.deepEqual(Object.keys(schema.marks).sort(), Object.keys(bare.marks).sort())
+})
+
+test('Cmd+P is bound to bullets, and nothing rebinds it back to print', () => {
+  const shortcuts = SCHOOL_EXTENSIONS.find((e) => e.name === 'schoolShortcuts')
+  assert.ok(shortcuts, 'the shortcut extension is gone')
+  // It has to outrank StarterKit: UndoRedo owns Mod-y and Bold owns Mod-b.
+  assert.ok(shortcuts.config.priority > 100,
+    'schoolShortcuts must outrank StarterKit or its keys never fire')
+  const keys = Object.keys(shortcuts.config.addKeyboardShortcuts.call({ editor: null }))
+  assert.deepEqual(keys.sort(), ['Mod-Shift-p', 'Mod-b', 'Mod-p'].sort())
+})

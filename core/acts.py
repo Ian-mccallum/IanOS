@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime, timedelta
 
-from core import db
+from core import db, learning
 
 MAX_SNOOZE_DAYS = 7
 
@@ -45,6 +45,8 @@ RING1_ACTS = (
     "transaction.recategorize",
     "fact.flag_unverified",
     "attention.snooze",
+    "task.create", "task.complete",
+    "learning.confirm",
 )
 
 # SPEC-v37 §4.4. "fact.flag_unverified" is granted to every role and is
@@ -61,6 +63,7 @@ RING1_GRANTS: dict[str, frozenset[str]] = {
     "wealth": frozenset(),
     "counsel": frozenset(),
     "chief": frozenset(),
+    "tutor": frozenset({"learning.confirm"}),
 }
 
 
@@ -230,6 +233,26 @@ def gym_confirm(conn, *, role: str, plane: str, thread_id: int | None) -> dict:
         summary=f"{role} confirmed today's workout.",
         inverse={"act": "gym.confirm", "day": today},
         write=lambda: db.confirm_gym(conn, today, commit=False),
+    )
+
+
+# --------------------------------------------------------- learning.confirm
+
+def learning_confirm(conn, *, role: str, plane: str, thread_id: int | None) -> dict:
+    """Today only; never writes grace or reset. Requires today's session row
+    to already exist (created by write_learning_task the night before, or
+    by Ian's own dashboard confirm -- see §3.2)."""
+    _require(role, "learning.confirm")
+    today = db.today()
+    row = learning.get_session(conn, today)
+    if row is None:
+        raise ActError("learning.confirm: no session for today yet")
+    return _apply(
+        conn, role=role, act="learning.confirm", plane=plane, thread_id=thread_id,
+        target_kind="learning_session", target_id=today,
+        summary=f"{role} confirmed today's learning session.",
+        inverse={"act": "learning.confirm", "day": today},
+        write=lambda: learning.confirm_session(conn, today, commit=False),
     )
 
 
@@ -408,6 +431,47 @@ def attention_snooze(conn, *, role: str, plane: str, thread_id: int | None,
     )
 
 
+# ------------------------------------------------------------------- task
+
+def task_create(conn, *, role: str, plane: str, thread_id: int | None,
+                 title: str, due_date: str | None = None,
+                 already_created_tonight: int = 0) -> dict:
+    """Capped at 2 per night; priority is hardcoded 0 -- there is no code
+    path from a nightly run to priority=1, only Ian's tap promotes a task to
+    Command (SPEC-v41 §6.2). The cap is an explicit parameter, not a global,
+    so this module stays free of any dependency on agents/runner.py's RUN
+    proxy and the cap stays directly unit-testable."""
+    _require(role, "task.create")
+    if already_created_tonight >= 2:
+        raise ActError("task.create capped at 2 per night")
+    return _apply(
+        conn, role=role, act="task.create", plane=plane, thread_id=thread_id,
+        target_kind="task", target_id=lambda result: result["id"],
+        summary=f'{role} added "{title}" to today.',
+        inverse={"act": "task.create"},
+        write=lambda: db.create_task(
+            conn, title, due_date=due_date, priority=0,
+            source="agent", source_role=role, commit=False,
+        ),
+    )
+
+
+def task_complete(conn, *, role: str, plane: str, thread_id: int | None,
+                   task_id: int) -> dict:
+    _require(role, "task.complete")
+    before = db.get_task(conn, task_id)
+    if before is None:
+        raise ActError("task.complete: task not found")
+    was_done = before.get("done_at") is not None
+    return _apply(
+        conn, role=role, act="task.complete", plane=plane, thread_id=thread_id,
+        target_kind="task", target_id=task_id,
+        summary=f'{role} marked "{before["title"]}" done.',
+        inverse={"act": "task.complete", "task_id": task_id, "was_done": was_done},
+        write=lambda: db.set_task_done(conn, task_id, True, commit=False),
+    )
+
+
 # ---------------------------------------------------------------------- undo
 
 _UNDO_HANDLERS = {}
@@ -459,6 +523,11 @@ def _undo_gym_confirm(conn, receipt: dict, inverse: dict) -> None:
     db.unconfirm_gym(conn, inverse["day"], commit=False)
 
 
+@_undo("learning.confirm")
+def _undo_learning_confirm(conn, receipt: dict, inverse: dict) -> None:
+    learning.unconfirm_session(conn, inverse["day"], commit=False)
+
+
 @_undo("activity.log")
 def _undo_activity_log(conn, receipt: dict, inverse: dict) -> None:
     db.log_activity(
@@ -497,6 +566,16 @@ def _undo_attention_snooze(conn, receipt: dict, inverse: dict) -> None:
         db.set_attention_snooze(conn, inverse["item_key"], inverse["prior_until"], commit=False)
     else:
         db.clear_attention_snooze(conn, inverse["item_key"], commit=False)
+
+
+@_undo("task.create")
+def _undo_task_create(conn, receipt: dict, inverse: dict) -> None:
+    db.delete_task(conn, int(receipt["target_id"]), commit=False)
+
+
+@_undo("task.complete")
+def _undo_task_complete(conn, receipt: dict, inverse: dict) -> None:
+    db.set_task_done(conn, inverse["task_id"], inverse["was_done"], commit=False)
 
 
 def undo_act(conn, act_id: int) -> dict:

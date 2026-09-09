@@ -71,7 +71,6 @@ export default function BeatTheClockPage({ state, refresh, toast, onCallMode, on
             +1 demo ({activity.demos || 0})
           </button>
         </div>
-        <p className="dim btc-sub">For calls made off the line. Runs log themselves.</p>
       </div>
       <LeadList />
       <PillarGoalPanel
@@ -83,6 +82,7 @@ export default function BeatTheClockPage({ state, refresh, toast, onCallMode, on
         refresh={refresh}
         toast={toast}
         variant="business"
+        doneStates={new Set((state.meta?.done_states || []).map((s) => s.toLowerCase()))}
       />
     </div>
   )

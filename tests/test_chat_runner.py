@@ -7,7 +7,7 @@ import pytest
 from claude_agent_sdk import ResultMessage
 
 from agents import runner
-from core import db
+from core import acts, db
 
 
 @pytest.fixture
@@ -334,3 +334,65 @@ def test_em_dashes_are_rewritten_not_merely_forbidden(conn, monkeypatch):
     assert "that, EIN" in body
     # A dash between digits is a range, not punctuation.
     assert "2-3" in body
+
+
+def test_prompt_memory_sections_follow_session_state(conn, monkeypatch):
+    """SPEC-v40 §4.4: COMPACTED CONTEXT renders only when the session is
+    fresh; EARLIER THREADS renders whenever the caller supplies it (the
+    caller does so on a thread's first turn only)."""
+    captured = {}
+
+    async def fake_query(*, prompt, options):
+        messages = [m async for m in prompt]
+        captured["prompt"] = messages[0]["message"]["content"]
+        captured["options"] = options
+        yield _result(_reply())
+
+    monkeypatch.setattr(runner, "query", fake_query)
+    earlier = [{"title": "Drop/add window", "date": "2026-08-30", "summary": "Ian asked when drop/add closes."}]
+    fresh = asyncio.run(runner.run_chat_turn(
+        conn, "hello", model=runner.SONNET, granted_chips=[], prior_turns=[],
+        thread_summary="Ian asked about SPAN 210 notes; Friday is thin.", earlier_threads=earlier,
+    ))
+    assert fresh["ok"] is True
+    text = captured["prompt"]
+    assert "COMPACTED CONTEXT" in text and "Friday is thin" in text
+    assert "EARLIER THREADS WITH THIS AGENT" in text and "Drop/add window (2026-08-30)" in text
+    assert text.index("COMPACTED CONTEXT") < text.index("IAN'S MESSAGE")
+
+    resumed = asyncio.run(runner.run_chat_turn(
+        conn, "hello again", model=runner.SONNET, granted_chips=[], prior_turns=[],
+        session_id="sdk-1", thread_summary="Ian asked about SPAN 210 notes.", earlier_threads=None,
+    ))
+    assert resumed["ok"] is True
+    assert captured["options"].resume == "sdk-1"
+    assert "COMPACTED CONTEXT" not in captured["prompt"]
+    assert "EARLIER THREADS" not in captured["prompt"]
+
+
+def test_chat_write_task_can_set_priority(monkeypatch, conn):
+    runner.RUN["conn"] = conn
+    runner.RUN["role"] = "chief"
+    result = asyncio.run(runner.chat_write_task.handler({"title": "Renew parking", "priority": 1}))
+    # _text() (the success path) sets no is_error key at all; only _err() does.
+    assert result.get("is_error") is not True
+    row = db.tasks_today(conn, db.today())[0]
+    assert row["priority"] == 1
+    assert row["source"] == "chat"
+
+
+def test_task_priority_never_set_by_nightly(conn):
+    out = acts.task_create(conn, role="steward", plane="nightly", thread_id=None,
+                            title="x")
+    assert db.get_task(conn, out["result"]["id"])["priority"] == 0
+
+
+def test_profile_write_is_tutor_only():
+    # Arrange: nothing, chat_write_allow is pure.
+    # Act: compute the instant-write set for tutor and for every other role.
+    # Assert: only tutor's set contains chat_write_learning_profile.
+    assert "chat_write_learning_profile" in runner.chat_write_allow("tutor")
+    for role in runner.ALLOWLISTS:
+        if role in ("tutor",) or role in runner.HEALTH_AGENT_ROLES:
+            continue
+        assert "chat_write_learning_profile" not in runner.chat_write_allow(role)

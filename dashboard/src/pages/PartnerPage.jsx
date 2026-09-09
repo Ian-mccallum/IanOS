@@ -17,13 +17,6 @@ function orderedRows(rows) {
   return groupTasks(rows).flatMap(({ parent, children }) => [parent, ...children])
 }
 
-const PARTNER_WHISPERS = [
-  'Start with something sweet below.',
-  'Small things add up.',
-  'She notices the effort.',
-  'The list is love, written down.',
-]
-
 function SparkleName({ reduced }) {
   const [burst, setBurst] = useState(0)
 
@@ -376,18 +369,6 @@ export default function PartnerPage({ tasks, summary, onTasksChange, toast, apiR
   const openGroups = groups.filter((group) => !group.complete)
   const doneGroups = groups.filter((group) => group.complete)
   const serverOpen = Number.isInteger(summary?.open_count) ? summary.open_count : null
-  const whisper = useMemo(() => {
-    if (groups.length) return null
-    const day = Math.floor(Date.now() / 86400000)
-    return PARTNER_WHISPERS[day % PARTNER_WHISPERS.length]
-  }, [groups.length])
-  const subLine = serverOpen == null
-    ? 'Waiting for the shared task count'
-    : serverOpen > 0
-      ? `${serverOpen} open ${serverOpen === 1 ? 'thing' : 'things'}`
-      : groups.length
-        ? 'All caught up'
-        : whisper
 
   const addOutcome = async () => {
     const taskTitle = title.trim()
@@ -553,9 +534,7 @@ export default function PartnerPage({ tasks, summary, onTasksChange, toast, apiR
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: reduced ? 0 : 0.2 }}
         >
-          <p className="partner-eyebrow">For my girlfriend <span className="partner-eyebrow-heart" aria-hidden="true">♥</span></p>
           <SparkleName reduced={reduced} />
-          <p className="partner-sub">{subLine}</p>
         </motion.div>
 
         <div className="partner-add glass-card glass-card-pad">
@@ -639,6 +618,7 @@ export default function PartnerPage({ tasks, summary, onTasksChange, toast, apiR
               toast={toast}
               variant="simple"
               notesDefault="#partner"
+              doneStates={new Set((state.meta?.done_states || []).map((s) => s.toLowerCase()))}
             />
           </div>
         )}

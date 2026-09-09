@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core import db, school
+from core import db, roles, school
 from agents import runner
 
 
@@ -327,3 +327,22 @@ def test_dispatch_summary_line_leaves_normal_not_due_skips_uncounted():
         ("counsel", {}, False, "no tripwire"),
     ]
     assert runner._dispatch_summary_line(plan) == "1 of 3 woke; 0 off; 0 out of season."
+
+
+# ------------------------------------------------------------- SPEC-v38 §1.4
+
+def test_tutor_runs_daily(conn):
+    # Arrange: a daily tutor role meta on an ordinary Wednesday.
+    # Act: ask the dispatcher whether it should run tonight.
+    # Assert: it runs, for the same reason every other daily role runs.
+    run, reason = runner.should_run(meta("tutor", "daily"), conn, WED, force=False)
+    assert run is True
+    assert reason == "daily"
+
+
+def test_tutor_in_sequence():
+    # Arrange/Act: read the canonical nightly sequence.
+    # Assert: tutor is in it, after watchdog and before counsel.
+    assert "tutor" in roles.SEQUENCE
+    assert roles.SEQUENCE.index("tutor") == roles.SEQUENCE.index("watchdog") + 1
+    assert roles.SEQUENCE.index("tutor") < roles.SEQUENCE.index("counsel")

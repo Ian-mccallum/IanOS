@@ -87,7 +87,6 @@ export default function TheLine({ refresh, toast, onCallMode, onBloom }) {
   const [undo, setUndo] = useState(null)          // { touchId, label }
   const [summary, setSummary] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [showMa, setShowMa] = useState(false)
   const [resumable, setResumable] = useState(() => loadSnapshot())
   const noteRef = useRef(null)
   const telRef = useRef(null)
@@ -199,7 +198,6 @@ export default function TheLine({ refresh, toast, onCallMode, onBloom }) {
 
   const advance = useCallback(async () => {
     setReceipt(null)
-    setShowMa(false)
     const next = idx + 1
     if (run && next >= (run.target || 0)) {
       try {
@@ -252,7 +250,6 @@ export default function TheLine({ refresh, toast, onCallMode, onBloom }) {
       refresh?.()
 
       const hold = MA_MS[outcome] || QUICK_MS
-      if (MA_MS[outcome]) setShowMa(true)
       setTimeout(advance, hold)
     } catch (e) {
       toast(e.message, 'warn')
@@ -352,7 +349,6 @@ export default function TheLine({ refresh, toast, onCallMode, onBloom }) {
             exit={rm ? { opacity: 0 } : { opacity: 0, x: -40 }}
             transition={{ type: 'spring', stiffness: 380, damping: 30 }}>
             <p className="line-receipt-text">{RECEIPT[receipt.outcome]}</p>
-            {showMa && <p className="line-receipt-sub">take the beat</p>}
           </motion.div>
         ) : (
           /* Keyed by LEAD, never by phase: brief -> live must recompose the

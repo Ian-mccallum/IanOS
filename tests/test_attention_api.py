@@ -67,13 +67,14 @@ def test_state_compiles_attention_once_from_reused_reads(client, monkeypatch):
 
     preloaded = captured["preloaded"]
     assert set(preloaded) == {
-        "goals", "gym", "partner_tasks", "lead_queue", "due_callbacks",
+        "goals", "gym", "partner_tasks", "tasks", "lead_queue", "due_callbacks",
         "plan_blocks", "pending_proposals", "stale_domains",
         "active_promises", "activity", "school_items", "school_meetings",
     }
     assert preloaded["goals"] == body["goals"]
     assert preloaded["gym"] == body["gym"]
     assert preloaded["partner_tasks"] == body["partner_tasks"]
+    assert preloaded["tasks"] == body["tasks_today"]
     assert preloaded["lead_queue"] == []
     assert preloaded["pending_proposals"] == body["pending_proposals"]
     assert preloaded["stale_domains"] == body["stale_domains"]

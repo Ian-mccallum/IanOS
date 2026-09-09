@@ -41,7 +41,7 @@ function clock(value) {
 
 function sessionTypeLabel(session) {
   if (session.session_type === 'meeting') return session.meeting?.kind || 'Class'
-  return 'Async workspace'
+  return 'Week'
 }
 
 function isAsyncCourse(course) {
@@ -104,8 +104,21 @@ function CoursePicker({ courses, activeCode, onSelect }) {
   )
 }
 
-function SessionRow({ session, active, onOpen }) {
+/** One hit with the sentence around it, the matched word left as written. */
+function MatchLine({ match }) {
+  return (
+    <span className="school-session-match">
+      {match.head ? '…' : ''}{match.before}
+      <mark>{match.match}</mark>
+      {match.after}{match.tail ? '…' : ''}
+    </span>
+  )
+}
+
+function SessionRow({ session, active, onOpen, query }) {
   const kind = sessionTypeLabel(session)
+  const matches = query ? (session.matches || []) : []
+  const extra = (session.match_count || 0) - matches.length
   return (
     <button
       type="button"
@@ -115,12 +128,22 @@ function SessionRow({ session, active, onOpen }) {
     >
       <span className="school-session-row-date"><time dateTime={session.session_date}>{sessionDate(session.session_date)}</time>{session.closed_at ? ' · Finished' : ''}</span>
       <span className="school-session-row-title">{session.title || kind}</span>
-      <span className="school-session-row-preview">{session.preview || 'No notes yet'}</span>
+      {matches.length ? (
+        <span className="school-session-row-matches">
+          {matches.map((match, index) => <MatchLine key={index} match={match} />)}
+          {extra > 0 && <span className="school-session-match-more">{extra} more in this note</span>}
+        </span>
+      ) : (
+        <span className="school-session-row-preview">
+          {/* A title-only hit still matched; saying so beats an unexplained row. */}
+          {query && session.title_match ? 'matches the title' : session.preview || 'No notes yet'}
+        </span>
+      )}
     </button>
   )
 }
 
-function SessionTimeline({ sessions, active, onOpen, today }) {
+function SessionTimeline({ sessions, active, onOpen, today, query = '' }) {
   const weekStart = schoolWeekStart(today || '')
   const groups = sessions.reduce((result, session) => {
     const key = weekStart && session.session_date >= weekStart ? 'This week' : 'Earlier'
@@ -132,7 +155,7 @@ function SessionTimeline({ sessions, active, onOpen, today }) {
     <section className="school-session-group" key={label} aria-label={label}>
       <h3>{label}</h3>
       <div className="school-session-list">
-        {rows.map((session) => <SessionRow key={session.id} session={session} active={active?.id === session.id} onOpen={onOpen} />)}
+        {rows.map((session) => <SessionRow key={session.id} session={session} active={active?.id === session.id} onOpen={onOpen} query={query} />)}
       </div>
     </section>
   ))
@@ -199,6 +222,9 @@ export default function SchoolNotebookPage({ state, toast, onBack }) {
   const [fileShelfOpen, setFileShelfOpen] = useState(false)
   const [studyShelfOpen, setStudyShelfOpen] = useState(false)
   const [pulseOpen, setPulseOpen] = useState(false)
+  const [sessionsOpen, setSessionsOpen] = useState(false)
+  const sessionQueryRef = useRef('')
+  const sessionRequestRef = useRef(0)
   const [fullScreen, setFullScreen] = useState(false)
   const [sessionQuery, setSessionQuery] = useState('')
   const [saveCycle, setSaveCycle] = useState(0)
@@ -275,16 +301,25 @@ export default function SchoolNotebookPage({ state, toast, onBack }) {
     void flushCurrentNoteRef.current()
   }, [])
 
-  const loadSessions = useCallback(async (courseCode) => {
+  // Find-in-all-notes (Ian, 2026-09-09). The search is the SERVER's, because
+  // only it has the full note text: a session card carries a 280-character
+  // preview, so filtering those client-side missed every word past the third
+  // line and the search read as broken. The server hands back each note's
+  // match count and the sentence around each hit.
+  const loadSessions = useCallback(async (courseCode, query = sessionQueryRef.current) => {
     if (!courseCode) return
+    const requestId = ++sessionRequestRef.current
     setLoadingSessions(true)
     try {
-      const result = await api(`/api/school/courses/${encodeURIComponent(courseCode)}/note-sessions`)
+      const search = query ? `?q=${encodeURIComponent(query)}` : ''
+      const result = await api(`/api/school/courses/${encodeURIComponent(courseCode)}/note-sessions${search}`)
+      // A slow response for an older query must not overwrite a newer one.
+      if (requestId !== sessionRequestRef.current) return
       setSessions(result.sessions || [])
     } catch (error) {
-      toast(error.message, 'crit')
+      if (requestId === sessionRequestRef.current) toast(error.message, 'crit')
     } finally {
-      setLoadingSessions(false)
+      if (requestId === sessionRequestRef.current) setLoadingSessions(false)
     }
   }, [toast])
 
@@ -372,7 +407,14 @@ export default function SchoolNotebookPage({ state, toast, onBack }) {
     }
   }, [activeCourse, loadSessions, school.today, toast])
 
-  useEffect(() => { loadSessions(activeCode) }, [activeCode, loadSessions])
+  useEffect(() => { sessionQueryRef.current = sessionQuery }, [sessionQuery])
+  useEffect(() => {
+    if (!activeCode) return undefined
+    // Typing a word is several keystrokes; only the pause is a search.
+    const delay = sessionQuery ? 200 : 0
+    const timer = setTimeout(() => { loadSessions(activeCode, sessionQuery) }, delay)
+    return () => clearTimeout(timer)
+  }, [activeCode, loadSessions, sessionQuery])
 
   useEffect(() => {
     const intent = intentRef.current
@@ -480,7 +522,7 @@ export default function SchoolNotebookPage({ state, toast, onBack }) {
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (event.key === 'Escape' && fullScreen && !pulseOpen && !fileShelfOpen && !studyShelfOpen) {
+      if (event.key === 'Escape' && fullScreen && !pulseOpen && !fileShelfOpen && !studyShelfOpen && !sessionsOpen) {
         event.preventDefault()
         setFullScreen(false)
         return
@@ -492,7 +534,7 @@ export default function SchoolNotebookPage({ state, toast, onBack }) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [fileShelfOpen, fullScreen, pulseOpen, saveNow, studyShelfOpen])
+  }, [fileShelfOpen, fullScreen, pulseOpen, saveNow, sessionsOpen, studyShelfOpen])
 
   useEffect(() => {
     const titleChanged = String(noteTitle || '').trim() && String(noteTitle || '').trim() !== open?.title
@@ -579,18 +621,18 @@ export default function SchoolNotebookPage({ state, toast, onBack }) {
   }, [])
 
   const nextMeeting = activeCourse?.next_meeting || null
-  const visibleSessions = useMemo(() => {
-    const query = sessionQuery.trim().toLocaleLowerCase()
-    if (!query) return sessions
-    return sessions.filter((session) => [
-      session.title,
-      session.preview,
-      session.course_code,
-      session.meeting?.kind,
-    ].filter(Boolean).join(' ').toLocaleLowerCase().includes(query))
-  }, [sessionQuery, sessions])
+  const visibleSessions = sessions
+  const searchSummary = useMemo(() => {
+    if (!sessionQuery.trim() || loadingSessions) return ''
+    const notes = sessions.length
+    const hits = sessions.reduce((total, session) => total + (session.match_count || 0), 0)
+    if (!notes) return ''
+    const noteWord = notes === 1 ? 'note' : 'notes'
+    if (!hits) return `${notes} ${noteWord} matched`
+    return `${hits} ${hits === 1 ? 'mention' : 'mentions'} in ${notes} ${noteWord}`
+  }, [loadingSessions, sessionQuery, sessions])
   const primaryLabel = isAsyncCourse(activeCourse)
-    ? 'Open this week'
+    ? 'Open week'
     : nextMeeting
       ? `${nextMeeting.existing_session_id ? 'Resume' : 'Start'} ${nextMeeting.kind || 'class'} note`
       : null
@@ -611,6 +653,39 @@ export default function SchoolNotebookPage({ state, toast, onBack }) {
       </div>
     )
   }
+
+  // One navigator, two homes: the rail at normal size, and a sheet in full
+  // screen, where the rail is hidden. Built here rather than duplicated so
+  // the search field and the timeline can never drift between them.
+  const navigator = (
+    <>
+      <div className="school-notebook-navigator-head">
+        <CoursePicker courses={courses} activeCode={activeCourse?.code} onSelect={chooseCourse} />
+        <div className="school-notebook-rail-head">
+          <h3>{activeCourse?.code} sessions</h3>
+          {isAsyncCourse(activeCourse) && <button type="button" className="school-notebook-new" onClick={openManualSession} disabled={loadingNote}>
+            This week
+          </button>}
+        </div>
+        <label className="school-session-search">
+          <span>Search all notes</span>
+          <input
+            type="search"
+            value={sessionQuery}
+            onChange={(event) => setSessionQuery(event.target.value)}
+            placeholder={`Find in ${activeCourse?.code || 'this notebook'}`}
+          />
+        </label>
+        {searchSummary && <p className="school-session-search-summary">{searchSummary}</p>}
+      </div>
+      <div className="school-navigator-sessions">
+        {loadingSessions ? <p className="school-notebook-empty">Loading sessions…</p>
+          : visibleSessions.length ? <SessionTimeline sessions={visibleSessions} active={open} onOpen={selectSession} today={school.today} query={sessionQuery} />
+            : sessionQuery ? <p className="school-notebook-empty">Nothing in {activeCourse?.code || 'this notebook'} mentions “{sessionQuery}”.</p>
+              : <p className="school-notebook-empty">No sessions yet.</p>}
+      </div>
+    </>
+  )
 
   return (
     <div className={`school-notebook-page page-stack${open ? ' has-open-note' : ''}${fullScreen ? ' is-full-screen' : ''}`}>
@@ -635,32 +710,7 @@ export default function SchoolNotebookPage({ state, toast, onBack }) {
       </header>
 
       <div className="school-notebook-layout">
-        <aside className="school-notebook-rail" aria-label="Notebook sessions">
-          <div className="school-notebook-navigator-head">
-            <CoursePicker courses={courses} activeCode={activeCourse?.code} onSelect={chooseCourse} />
-            <div className="school-notebook-rail-head">
-              <h3>{activeCourse?.code} sessions</h3>
-            {isAsyncCourse(activeCourse) && <button type="button" className="school-notebook-new" onClick={openManualSession} disabled={loadingNote}>
-              This week
-            </button>}
-            </div>
-            <label className="school-session-search">
-              <span>Find a note</span>
-              <input
-                type="search"
-                value={sessionQuery}
-                onChange={(event) => setSessionQuery(event.target.value)}
-                placeholder="Search this notebook"
-              />
-            </label>
-          </div>
-          <div className="school-navigator-sessions">
-            {loadingSessions ? <p className="school-notebook-empty">Loading sessions…</p>
-              : visibleSessions.length ? <SessionTimeline sessions={visibleSessions} active={open} onOpen={selectSession} today={school.today} />
-                : sessionQuery ? <p className="school-notebook-empty">No class note matches “{sessionQuery}”.</p>
-                  : <p className="school-notebook-empty">No sessions yet.</p>}
-          </div>
-        </aside>
+        <aside className="school-notebook-rail" aria-label="Notebook sessions">{navigator}</aside>
 
         <section className="school-note-writing" aria-labelledby="school-note-heading">
           {open ? (
@@ -721,7 +771,7 @@ export default function SchoolNotebookPage({ state, toast, onBack }) {
               <div className="school-note-preflight-copy">
                 <h1>{activeCourse?.code} notes</h1>
                 <p>{isAsyncCourse(activeCourse)
-                  ? `One workspace for the week of ${sessionDate(schoolWeekStart(school.today))}.`
+                  ? `Week of ${sessionDate(schoolWeekStart(school.today))}`
                   : nextMeeting ? `${nextMeeting.kind || 'Class'} · ${sessionDate(nextMeeting.start_at?.slice(0, 10))} · ${clock(nextMeeting.start_at)}${nextMeeting.location ? ` · ${nextMeeting.location}` : ''}`
                     : 'No upcoming session loaded.'}</p>
                 {primaryLabel && <button
@@ -759,6 +809,33 @@ export default function SchoolNotebookPage({ state, toast, onBack }) {
           <ClassPulse session={open} course={activeCourse} onOpenFiles={openFileShelf} onOpenStudy={openStudyShelf} />
         </aside>
       </div>
+
+      {fullScreen && (
+        <div className="school-fs-bar" role="toolbar" aria-label="Full screen controls">
+          <button type="button" className="school-fs-btn" onClick={() => setSessionsOpen(true)}>Notes</button>
+          <button type="button" className="school-fs-btn" onClick={() => setPulseOpen(true)}>Details</button>
+          <button type="button" className="school-fs-btn" onClick={openFileShelf} disabled={!activeCourse}>Files</button>
+          <span className={`school-fs-save${saveError ? ' is-error' : ''}`} aria-live="polite">
+            {saveError ? 'Needs attention' : saving ? 'Saving…' : open?.closed_at ? 'Finished' : open ? 'Saved' : ''}
+          </span>
+          {open && !open.closed_at && (
+            <button type="button" className="school-fs-btn" onClick={wrapClass} disabled={saving}>Finish</button>
+          )}
+          <button type="button" className="school-fs-btn school-fs-exit" onClick={() => setFullScreen(false)}>
+            Exit <kbd>esc</kbd>
+          </button>
+        </div>
+      )}
+
+      <Sheet
+        open={sessionsOpen}
+        onClose={() => setSessionsOpen(false)}
+        title={`${activeCourse?.code || 'Course'} notes`}
+        variant="dialog"
+        className="school-sessions-sheet"
+      >
+        <div className="school-sessions-sheet-body">{navigator}</div>
+      </Sheet>
 
       <Sheet
         open={pulseOpen}

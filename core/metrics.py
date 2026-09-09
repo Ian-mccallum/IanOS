@@ -49,14 +49,14 @@ def _is_stale(conn, source: str) -> bool:
 
 # ----------------------------------------------------------------- resolvers
 
-def _burn_this_month(conn) -> tuple[float, str]:
+def _burn_this_month(conn, goal=None) -> tuple[float, str]:
     this_month = db.today()[:7]
     burns = {b["month"]: b["burn"] for b in db.burn_by_month(conn, 3)}
     val = burns.get(this_month, 0.0)
     return val, f"${val:.2f} this month"
 
 
-def _audit_calls_today(conn) -> tuple[float, str]:
+def _audit_calls_today(conn, goal=None) -> tuple[float, str]:
     acts = db.recent_activity(conn, 7)
     today_row = next((r for r in acts if r["date"] == db.today()), None)
     a7 = sum(r["audit_calls"] for r in acts)
@@ -64,7 +64,7 @@ def _audit_calls_today(conn) -> tuple[float, str]:
     return float(today), f"{today} today · {a7} last 7d"
 
 
-def _follow_ups_today(conn) -> tuple[float, str]:
+def _follow_ups_today(conn, goal=None) -> tuple[float, str]:
     acts = db.recent_activity(conn, 7)
     today_row = next((r for r in acts if r["date"] == db.today()), None)
     a7 = sum(r["follow_ups"] for r in acts)
@@ -72,13 +72,13 @@ def _follow_ups_today(conn) -> tuple[float, str]:
     return float(today), f"{today} today · {a7} last 7d"
 
 
-def _demos_last_7d(conn) -> tuple[float, str]:
+def _demos_last_7d(conn, goal=None) -> tuple[float, str]:
     acts = db.recent_activity(conn, 7)
     total = sum(r["demos"] for r in acts)
     return float(total), f"{total} last 7d"
 
 
-def _sleep_avg_7d(conn) -> tuple[float | None, str]:
+def _sleep_avg_7d(conn, goal=None) -> tuple[float | None, str]:
     rows = db.recent_health(conn, 7)
     vals = [r["sleep_hours"] for r in rows if r.get("sleep_hours") is not None]
     if not vals:
@@ -87,7 +87,7 @@ def _sleep_avg_7d(conn) -> tuple[float | None, str]:
     return avg, f"{avg}h avg last 7d"
 
 
-def _sleep_last_night(conn) -> tuple[float | None, str]:
+def _sleep_last_night(conn, goal=None) -> tuple[float | None, str]:
     rows = db.recent_health(conn, 2)
     for r in rows:
         if r.get("sleep_hours") is not None:
@@ -95,47 +95,47 @@ def _sleep_last_night(conn) -> tuple[float | None, str]:
     return None, "no data"
 
 
-def _steps_today(conn) -> tuple[float | None, str]:
+def _steps_today(conn, goal=None) -> tuple[float | None, str]:
     row = db.health_today(conn)
     if row and row.get("steps") is not None:
         return float(row["steps"]), f"{row['steps']:,} steps"
     return None, "no data"
 
 
-def _workouts_this_week(conn) -> tuple[float, str]:
+def _workouts_this_week(conn, goal=None) -> tuple[float, str]:
     rows = db.recent_health(conn, 7)
     total = sum(r.get("workouts") or 0 for r in rows)
     return float(total), f"{total} last 7d"
 
 
-def _energy_today(conn) -> tuple[float | None, str]:
+def _energy_today(conn, goal=None) -> tuple[float | None, str]:
     row = db.health_today(conn)
     if row and row.get("energy") is not None:
         return float(row["energy"]), f"{row['energy']}/5"
     return None, "no data"
 
 
-def _portfolio_value(conn) -> tuple[float | None, str]:
+def _portfolio_value(conn, goal=None) -> tuple[float | None, str]:
     snap = db.portfolio_snapshot(conn)
     if not snap:
         return None, "no data"
     return snap["total_value"], f"${snap['total_value']:,.2f}"
 
 
-def _checking_balance(conn) -> tuple[float | None, str]:
+def _checking_balance(conn, goal=None) -> tuple[float | None, str]:
     chk = db.checking_balance(conn)
     if not chk or chk.get("balance") is None:
         return None, "no data, add SIMPLEFIN_ACCESS_URL or run make sync-chase"
     return float(chk["balance"]), f"${chk['balance']:,.2f}"
 
 
-def _work_hours_week(conn) -> tuple[float, str]:
+def _work_hours_week(conn, goal=None) -> tuple[float, str]:
     hours = db.calendar_hours_by_category(conn, 7)
     val = hours.get("work", 0.0)
     return val, f"{val}h work last 7d"
 
 
-def _clients_signed(conn) -> tuple[float, str]:
+def _clients_signed(conn, goal=None) -> tuple[float, str]:
     for g in db.all_goals(conn):
         if g.get("metric_key") == "clients_signed" or (g.get("name") or "").startswith("Sign Clockwork"):
             v = _parse_num(g.get("current_value", "0")) or 0
@@ -143,11 +143,28 @@ def _clients_signed(conn) -> tuple[float, str]:
     return 0.0, "0"
 
 
-def _gym_weekdays_this_week(conn) -> tuple[float, str]:
+def _gym_weekdays_this_week(conn, goal=None) -> tuple[float, str]:
     state = db.gym_streak_state(conn)
     done = state["weekdays_this_week"]
     elapsed = max(state["weekdays_elapsed"], 1)
     return float(done), f"{done}/{elapsed} weekdays"
+
+
+def _tasks_done_this_week(conn, goal=None) -> tuple[float, str]:
+    n = db.tasks_done_this_week(conn, date.today().isoformat())
+    return (n, f"{n} this week")
+
+
+def _tasks_done_for_goal(conn, goal=None) -> tuple[float, str]:
+    """Deliberately never returns the literal string "no data", even at zero
+    steps: goal_status() treats actual_label == "no data" as NO DATA, and a
+    Life goal must never render that pill (SPEC-v41 §5.1, §5.3)."""
+    if goal is None:
+        return (0, "no steps yet")
+    done, total = db.tasks_done_for_goal(conn, goal["id"])
+    if total == 0:
+        return (0, "no steps yet")
+    return (done, f"{done} of {total} steps")
 
 
 METRIC_RESOLVERS = {
@@ -165,6 +182,8 @@ METRIC_RESOLVERS = {
     "checking_balance": _checking_balance,
     "work_hours_week": _work_hours_week,
     "clients_signed": _clients_signed,
+    "tasks_done_this_week": _tasks_done_this_week,
+    "tasks_done_for_goal": _tasks_done_for_goal,
 }
 
 
@@ -227,18 +246,12 @@ def goal_status(goal: dict) -> str:
 
 
 def resolve_goal_actuals(conn, goals: list[dict] | None = None) -> list[dict]:
-    goals = goals or db.all_goals(conn)
+    goals = goals if goals is not None else db.all_goals(conn)
     for g in goals:
         g["days_remaining"] = _days_remaining(g.get("deadline"))
-        key = (g.get("metric_key") or "").strip()
+        key = g.get("metric_key")
         if key and key in METRIC_RESOLVERS:
-            actual, label = METRIC_RESOLVERS[key](conn)
-            g["actual"] = actual
-            g["actual_label"] = label
-        elif key == "clients_signed":
-            actual, label = METRIC_RESOLVERS["clients_signed"](conn)
-            g["actual"] = actual
-            g["actual_label"] = label
+            g["actual"], g["actual_label"] = METRIC_RESOLVERS[key](conn, g)
         else:
             g["actual"] = g.get("current_value")
             g["actual_label"] = g.get("current_value") or "-"

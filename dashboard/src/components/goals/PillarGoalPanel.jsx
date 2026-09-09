@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from 'motion/react'
 import { api } from '../../lib/api.js'
 import { defaultDomainForPillar } from '../../lib/pillars.js'
 import GoalForm from './GoalForm.jsx'
-import GoalWizard from './GoalWizard.jsx'
+import GoalSheet from './GoalSheet.jsx'
 import LegalChain from './LegalChain.jsx'
 import BlockedBadge from './BlockedBadge.jsx'
 
@@ -47,12 +47,12 @@ function Meter({ value, max, level, label }) {
   )
 }
 
-function Editable({ goal, editingId, setEditingId, refresh, toast, defaultDomain, allGoals, children }) {
+function Editable({ goal, editingId, setEditingId, refresh, toast, defaultDomain, allGoals, pillar, children }) {
   const rm = useReducedMotion()
   if (editingId === goal.id) {
     return (
       <motion.div initial={rm ? false : { opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}>
-        <GoalForm initial={goal} toast={toast} defaultDomain={defaultDomain} allGoals={allGoals}
+        <GoalForm initial={goal} toast={toast} defaultDomain={defaultDomain} allGoals={allGoals} pillar={pillar}
                   onSaved={() => { setEditingId(null); refresh() }}
                   onDeleted={() => { setEditingId(null); refresh() }}
                   onCancel={() => setEditingId(null)} />
@@ -96,10 +96,12 @@ function Editable({ goal, editingId, setEditingId, refresh, toast, defaultDomain
  * to another pillar. Archive is a soft retire with an Undo, never a delete:
  * metrics resolve off goal ids, so a re-created goal would not be a restore.
  */
-function SwipeRow({ goal, onEdit, onArchive, children }) {
+export function SwipeRow({ goal, onEdit, onArchive, archiveLabel = 'Archive', children }) {
   const [dx, setDx] = useState(0)
   const start = useRef(null)
-  const REVEAL = 132          // width of the two buttons behind the row
+  // 66px per revealed button. A row with nothing to edit (a task, whose text
+  // is its whole content) reveals one button, not a dead "Edit" beside it.
+  const REVEAL = onEdit ? 132 : 66
   // Same axis-judgment as lib/swipe.js's pillar ring: decide once, on the
   // first 12px of travel, whichever direction dominates. Without this an
   // ordinary vertical scroll of the goal list reads as a horizontal drag on
@@ -133,8 +135,8 @@ function SwipeRow({ goal, onEdit, onArchive, children }) {
   return (
     <div className="swipe-row" data-swipe-own="">
       <div className="swipe-actions" aria-hidden={dx === 0}>
-        <button type="button" onClick={() => { setDx(0); onEdit() }}>Edit</button>
-        <button type="button" className="swipe-archive" onClick={() => { setDx(0); onArchive() }}>Archive</button>
+        {onEdit && <button type="button" onClick={() => { setDx(0); onEdit() }}>Edit</button>}
+        <button type="button" className="swipe-archive" onClick={() => { setDx(0); onArchive() }}>{archiveLabel}</button>
       </div>
       {/* .swipe-face is opaque at every dx, including rest: the Edit/Archive
           buttons are anchored behind the row's own right edge and bleed
@@ -247,16 +249,36 @@ function QuotaRow({ goal, ed, defaultDomain }) {
   )
 }
 
-function DeadlineRow({ goal, ed, defaultDomain, allGoals }) {
-  const d = goal.days_remaining
-  const level = d == null ? 'idle' : d < 7 ? 'crit' : d < 14 ? 'warn' : 'good'
+function DeadlineRow({ goal, ed, defaultDomain }) {
+  const level = goal.days_remaining == null ? 'idle'
+    : goal.days_remaining < 7 ? 'crit'
+    : goal.days_remaining < 14 ? 'warn' : 'good'
+  const done = ed.doneStates.has(String(goal.current_value || '').toLowerCase())
+  const toggle = async () => {
+    await api(`/api/goals/${goal.id}`, 'PATCH', { current_value: done ? '' : 'done' })
+    ed.refresh()
+  }
   return (
     <Editable goal={goal} {...ed} defaultDomain={defaultDomain}>
       <div className="deadline-row">
-        <StatusChip level={level}>{d == null ? 'No date' : d < 0 ? `${-d}d late` : `${d}d left`}</StatusChip>
+        <button
+          type="button"
+          className={`deadline-check${done ? ' checked' : ''}`}
+          onClick={toggle}
+          aria-label={`Mark "${goal.name}" ${done ? 'not done' : 'done'}`}
+        >
+          <span className="deadline-check-mark">✓</span>
+        </button>
+        {goal.deadline && (
+          <StatusChip level={level}>
+            {goal.days_remaining == null ? 'No date'
+              : goal.days_remaining < 0 ? `${-goal.days_remaining}d late`
+              : `${goal.days_remaining}d left`}
+          </StatusChip>
+        )}
         <span className="deadline-name">{goal.name}</span>
         <BlockedBadge goal={goal} />
-        <span className="dim">{goal.current_value || goal.actual_label || '-'}</span>
+        {!done && <span className="dim">{goal.current_value || goal.actual_label || '-'}</span>}
       </div>
     </Editable>
   )
@@ -287,7 +309,7 @@ export function BusinessGoals({ goals, burnMonths, ed, chainGoals, allGoals }) {
 
   return (
     <>
-      <LegalChain goals={allBtc} />
+      <LegalChain goals={allBtc} doneStates={ed.doneStates} />
       {client && (
         <Editable goal={client} {...ed} defaultDomain="business">
           <div className="goal-hero">
@@ -336,7 +358,7 @@ export function BusinessGoals({ goals, burnMonths, ed, chainGoals, allGoals }) {
       {deadlines.length > 0 && (
         <div className="goal-block">
           <div className="section-label">Deadlines</div>
-          {deadlines.map((g) => <DeadlineRow key={g.id} goal={g} ed={ed} defaultDomain="business" allGoals={allGoals} />)}
+          {deadlines.map((g) => <DeadlineRow key={g.id} goal={g} ed={ed} defaultDomain="business" />)}
         </div>
       )}
       {others.map((g) => <GenericGoalRow key={g.id} goal={g} ed={ed} defaultDomain="business" />)}
@@ -351,7 +373,7 @@ export function SimpleGoals({ goals, ed, defaultDomain, allGoals }) {
   return (
     <>
       {quotas.map((q) => <QuotaRow key={q.id} goal={q} ed={ed} defaultDomain={defaultDomain} />)}
-      {deadlines.map((g) => <DeadlineRow key={g.id} goal={g} ed={ed} defaultDomain={defaultDomain} allGoals={allGoals} />)}
+      {deadlines.map((g) => <DeadlineRow key={g.id} goal={g} ed={ed} defaultDomain={defaultDomain} />)}
       {rest.map((g) => <GenericGoalRow key={g.id} goal={g} ed={ed} defaultDomain={defaultDomain} />)}
     </>
   )
@@ -371,12 +393,13 @@ export default function PillarGoalPanel({
   toast,
   variant = 'simple',
   notesDefault = '',
+  doneStates = new Set(),
 }) {
   const [editingId, setEditingId] = useState(null)
   const [adding, setAdding] = useState(false)
   const [hideOnTrack, setHideOnTrack] = useState(true)
   const defaultDomain = defaultDomainForPillar(pillar)
-  const ed = { editingId, setEditingId, refresh, toast, allGoals: goals }
+  const ed = { editingId, setEditingId, refresh, toast, allGoals: goals, pillar, doneStates }
   const shown = hideOnTrack ? (goals || []).filter(needsAttention) : (goals || [])
   const hidden = (goals || []).filter(needsAttention).length < (goals || []).length
     ? (goals || []).filter((g) => !needsAttention(g)).length : 0
@@ -391,15 +414,14 @@ export default function PillarGoalPanel({
           </button>
         </header>
         <div className="panel-body goals">
-          {adding && (
-            <GoalWizard
-              pillar={pillar}
-              toast={toast}
-              notesDefault={notesDefault}
-              onSaved={() => { setAdding(false); refresh() }}
-              onCancel={() => setAdding(false)}
-            />
-          )}
+          <GoalSheet
+            open={adding}
+            onClose={() => setAdding(false)}
+            pillar={pillar}
+            toast={toast}
+            notesDefault={notesDefault}
+            onSaved={() => { setAdding(false); refresh() }}
+          />
           {variant === 'business' ? (
             <BusinessGoals goals={shown} chainGoals={chainGoals || goals} burnMonths={burnMonths} ed={ed} allGoals={goals} />
           ) : (

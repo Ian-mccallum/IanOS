@@ -147,3 +147,37 @@ def test_patch_gym_prefs_accepts_5_or_7(client, track_days):
     response = client.patch("/api/gym/prefs", json={"track_days_per_week": track_days})
     assert response.status_code == 200
     assert response.json()["track_days_per_week"] == track_days
+
+
+# ------------------------------------------------------------- SPEC-v38 §6.4
+
+def test_no_new_goal_or_fact_domain():
+    # Arrange: nothing, these are static tables.
+    # Act: read db.DOMAINS and db.FACT_DOMAINS.
+    # Assert: neither gained a 'learning' value; routing goes through NAMESPACE_DOMAINS instead.
+    assert "learning" not in db.DOMAINS
+    assert "learning" not in db.FACT_DOMAINS
+    assert db.NAMESPACE_DOMAINS["learning"] == "personal"
+
+
+def test_life_goal_excludes_learning_goal():
+    # Arrange: one personal goal tagged #learning and one plain personal goal.
+    # Act: split personal goals into life vs learning.
+    # Assert: the tagged goal appears only under learning, never life.
+    goals = [
+        {"domain": "personal", "notes": "#learning", "name": "Finish Python course"},
+        {"domain": "personal", "notes": "", "name": "Renew passport"},
+    ]
+    life = pillars.goals_for_pillar(goals, "life")
+    learn = pillars.goals_for_pillar(goals, "learning")
+    assert [g["name"] for g in learn] == ["Finish Python course"]
+    assert [g["name"] for g in life] == ["Renew passport"]
+
+
+def test_learning_pillar_status_never_off_track(conn):
+    # Arrange: an empty (no-streak) learning state.
+    # Act: compute pillars.
+    # Assert: the learning pillar's status is always ON TRACK, matching partner's precedent.
+    out = pillars.compute_pillars(conn, [], {"goal_ids": [], "domains": []}, [], {}, {"streak": 0})
+    learning_pillar = out["learning"]
+    assert learning_pillar["status"] == "ON TRACK"

@@ -171,7 +171,8 @@ def test_no_agent_tool_can_write_a_lead_stage_touch_or_run():
         assert "lead" not in name or name == "read_pipeline"
     writers = {t for t in runner.ALL_TOOLS if t.startswith("write_") or t.startswith("create_")}
     assert writers == {"write_memo", "write_brief", "write_focus", "write_fact",
-                       "write_health_insight", "create_proposal"}
+                       "write_health_insight", "create_proposal",
+                       "write_learning_task"}
     for allowed in runner.ALLOWLISTS.values():
         assert not any(t.startswith("write_lead") or t.endswith("_touch") for t in allowed)
 
@@ -213,3 +214,113 @@ def test_pipeline_prompt_lines_are_precomputed(conn):
 
 def test_pipeline_prompt_handles_an_empty_pipeline(conn):
     assert "no leads imported yet" in runner._pipeline_lines(conn)
+
+
+# ------------------------------------------- tool schemas say what they mean
+# Ian, 2026-09-09: Alfred was asked to put dinner and stargazing on the plan
+# and refused, explaining that the plan-block tool required a goal_id and that
+# inventing one would misattribute progress to a real goal. He was right. The
+# tool's DESCRIPTION said "goal_id optional"; its SCHEMA required it, because
+# the SDK marks every key of a dict-style schema required:
+#
+#     return {"type": "object", "properties": properties,
+#             "required": list(properties.keys())}
+#
+# A guardrail written in prose loses to the machine-readable contract every
+# time. These tests keep optionality in the schema.
+
+def _sdk_tools():
+    from claude_agent_sdk import SdkMcpTool
+
+    from agents import runner
+
+    return sorted(
+        (t for t in vars(runner).values() if isinstance(t, SdkMcpTool)),
+        key=lambda t: t.name,
+    )
+
+
+def _emitted_schema(tool):
+    """Exactly what the model receives for this tool."""
+    schema = tool.input_schema
+    if (isinstance(schema, dict) and "type" in schema and "properties" in schema):
+        return schema
+    # The SDK's dict-style path: every key required.
+    return {
+        "type": "object",
+        "properties": {name: {} for name in schema},
+        "required": list(schema),
+    }
+
+
+@pytest.mark.parametrize("tool_name,param", [
+    ("chat_write_plan_block", "goal_id"),
+    ("act_plan_block_create", "goal_id"),
+    ("chat_write_task", "goal_id"),
+    ("chat_write_task", "due_date"),
+    ("chat_write_goal", "deadline"),
+    ("chat_write_note", "domain"),
+    ("chat_confirm_gym", "date"),
+    ("chat_write_partner_task", "parent_id"),
+    ("create_proposal", "attachment"),
+    ("create_proposal", "metadata"),
+    ("write_memo", "priority"),
+    ("read_school", "notes"),
+])
+def test_an_optional_parameter_is_optional_in_the_schema(tool_name, param):
+    tool = next((t for t in _sdk_tools() if t.name == tool_name), None)
+    assert tool is not None, f"{tool_name} is gone"
+    schema = _emitted_schema(tool)
+    assert param in schema["properties"], f"{tool_name} lost {param}"
+    assert param not in schema.get("required", []), (
+        f"{tool_name}.{param} is advertised to the model as REQUIRED. A model "
+        f"with nothing honest to put there either invents a value or refuses "
+        f"the whole call; both are wrong. Declare it `T | None` via _schema()."
+    )
+
+
+def test_no_tool_requires_a_parameter_its_own_description_calls_optional():
+    """The general form of the bug, not just the instances known today."""
+    offenders = []
+    for tool in _sdk_tools():
+        schema = _emitted_schema(tool)
+        required = set(schema.get("required", []))
+        for param in schema["properties"]:
+            # Only the unambiguous phrasings: "<param> optional",
+            # "<param> defaults to", "optional <param>".
+            described = re.search(
+                rf'\b{re.escape(param)}\b\s*(?:is\s+)?optional'
+                rf'|optional\s+{re.escape(param)}\b'
+                rf'|\b{re.escape(param)}\b\s+defaults?\s+to'
+                rf'|\b{re.escape(param)}\b\s*\(default',
+                tool.description, re.I,
+            )
+            if described and param in required:
+                offenders.append(f"{tool.name}.{param}")
+    assert not offenders, (
+        "these tools describe a parameter as optional but require it in the "
+        f"schema, which is the contradiction that broke plan-block writes: {offenders}"
+    )
+
+
+def test_every_tool_schema_still_declares_its_required_arguments():
+    """The mirror image: _schema() must not have made everything optional."""
+    must_require = {
+        "chat_write_plan_block": {"date", "start_time", "end_time", "title"},
+        "chat_write_goal": {"name", "domain"},
+        "chat_write_note": {"body"},
+        "chat_write_task": {"title"},
+        "chat_write_partner_task": {"title"},
+        "create_proposal": {"action", "reasoning"},
+        "write_memo": {"topic", "body"},
+        "act_plan_block_create": {"date", "start_time", "end_time", "title"},
+    }
+    for tool in _sdk_tools():
+        expected = must_require.get(tool.name)
+        if not expected:
+            continue
+        required = set(_emitted_schema(tool).get("required", []))
+        assert expected <= required, (
+            f"{tool.name} no longer requires {expected - required}; an omitted "
+            f"argument here becomes an empty or defaulted write"
+        )

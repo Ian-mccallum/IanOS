@@ -38,6 +38,7 @@ def empty_preloaded(**updates):
         "lead_queue": [],
         "activity": {"audit_calls": leads.DAILY_QUOTA, "follow_ups": 10},
         "partner_tasks": [],
+        "tasks": [],
         "stale_domains": [],
         "goal_lookup": {},
         "school_items": [],
@@ -549,3 +550,38 @@ def test_evening_routine_ranks_school_item_before_call_run():
     ]
     ranked = attention.rank_candidates(rows, NOW_EVENING)
     assert [item.kind for item in ranked] == ["school_item", "call_run"]
+
+
+def test_priority_task_becomes_a_band_2_candidate(conn):
+    conn.execute(
+        "INSERT INTO tasks (title, due_date, priority) VALUES ('Renew parking', '2026-08-14', 1)"
+    )
+    conn.commit()
+    preloaded = empty_preloaded(tasks=db.tasks_today(conn, "2026-08-14"))
+    result = attention.compile_attention(conn, NOW_MORNING, preloaded=preloaded)
+    by_key = {item.key: item for item in result.ranked}
+    assert by_key["task:1"].interaction == "task_complete"
+    assert by_key["task:1"].band == 2
+    assert by_key["task:1"].reason == "today"
+
+
+def test_priority_task_is_band_2_forever(conn):
+    conn.execute(
+        "INSERT INTO tasks (title, due_date, priority) VALUES ('Old thing', '2026-08-01', 1)"
+    )
+    conn.commit()
+    preloaded = empty_preloaded(tasks=db.tasks_today(conn, "2026-08-14"))
+    result = attention.compile_attention(conn, NOW_MORNING, preloaded=preloaded)
+    by_key = {item.key: item for item in result.ranked}
+    assert by_key["task:1"].band == 2
+    assert "since" in by_key["task:1"].reason
+
+
+def test_non_priority_task_is_not_a_candidate(conn):
+    conn.execute(
+        "INSERT INTO tasks (title, due_date, priority) VALUES ('Not urgent', '2026-08-14', 0)"
+    )
+    conn.commit()
+    preloaded = empty_preloaded(tasks=db.tasks_today(conn, "2026-08-14"))
+    keys = {item.key for item in attention.collect_candidates(conn, NOW_MORNING, preloaded=preloaded)}
+    assert "task:1" not in keys

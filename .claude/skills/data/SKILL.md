@@ -33,6 +33,8 @@ No SQLAlchemy, no second schema source, ever.
 | `streak_events` grace/reset | the nightly run | Idempotent; the UI writes only `confirm` |
 | Journal media files | the `/api/journal` upload route | Extension whitelist, served by entry id, no path traversal |
 | `inbound_requests` | `ingest/sync_btc.py` (both seams) | Ack only after a durable write; `source='personal'` never touches `leads`; consent is walled |
+| `poop_log` | the `/api/poop` routes (Ian's taps) | No agent tool and no Ring 1 act writes it; `day` is stamped at the tap, never derived from `logged_at` |
+| `school_items` (`syllabus` provider) | `data/fall_2026_school_seed.json` via `make sync-syllabus` | `seed_inventory` archives any syllabus item the file no longer lists, so a hand-inserted row is erased on the next load |
 
 A new data source gets a new loader that owns it, never a widened existing
 one. Agents never write tables directly: they have tools, tools have
@@ -72,6 +74,11 @@ path; a new question gets one function that everything calls.
 - **Pipeline**: `read_pipeline` same pattern (`PIPELINE_READERS`, scout +
   chief). Run/heat data is deliberately withheld: agents see dials and
   outcomes, never "he stopped after 4".
+- **The log** (`poop_log`): counts, the 7-day average and the Bristol mix ride
+  `read_health`, so they inherit its health-AI consent gate. The `note`
+  column does not: writing Ian types about himself follows the journal/notes
+  wall, not the sensor rule. Values live on `no-store` `/api/poop` routes,
+  never in `/api/state`.
 - **Facts**: `read_facts` is code-scoped to the agent's own domains; an agent
   cannot request another domain's memory. Connector/seed facts are born
   `verified=0` and stay untrusted until Ian confirms.
@@ -127,10 +134,15 @@ permanently unreadable, by design.
 | Raw `cp` of `ianos.db` for a "backup" | WAL means the copy can be mid-write corrupt, and it looks fine until restore day | `VACUUM INTO`, or `make backup` which does it (D8) |
 | `trap on_err ERR` without `set -E` in bash | The trap silently never fires inside functions; the backup failed with no memo | `set -Eeuo pipefail` when a trap must fire in functions |
 | launchd job calling a brew-installed binary | launchd's PATH is bare; the nightly job dies on `command not found` | Resolve binaries explicitly (`backup.sh`/`phone.sh` precedent) |
+| launchd job whose program is `/bin/bash`, repo under `~/Desktop` | TCC denies it the protected folder, so it exits 126 BEFORE the script runs and the script's own ERR trap cannot write the failure memo. The backup was dead 29 days while every other job worked, because they all exec `.venv/bin/python` | Launch through a binary that already has the grant and `exec` into bash; TCC responsibility survives the exec. And never let "it writes a memo on failure" be the only signal, since it cannot cover a failure to start |
 | SQLite booleans reaching React | `0 && <Pin/>` renders a literal `0` in the UI | Coerce with `!!` at every boolean-ish column (shared with osui) |
 | Trusting connector facts | Sync writes a wrong birthday; agents repeat it forever | Born `verified=0`; agents trust only what Ian confirmed (D6) |
 | A goal query bypassing `all_goals()` | Archived goals resurface in one surface and not others | Single read path (D5) |
 | Testing against the real B2 repo | A test could prune or pollute the only off-site copy | Tests use a throwaway local `RESTIC_REPOSITORY` (see `tests/test_backup.py`) |
+| A stable key derived from LIST POSITION | The school seed's `known_major_dates` entries get `milestone-{position}` when they carry no `id`, and `school_item_completions` is keyed on it. Inserting one entry mid-list re-keys every later item and orphans its completions | Give every entry an explicit `id`; a dedupe key must not move when its neighbours do (D4) |
+| A LIKE search that does not escape `%` and `_` | Typing a single `%` returned every row, which reads as a broken search rather than as SQL | Escape the wildcards and pass `ESCAPE`, so a typed wildcard searches for itself |
+| A client-side filter over a truncated projection | Notebook search filtered a 280-character `preview`, so a word written later in a lecture never matched though the SQL could find it | Search where the full text is (the server), and return the match context so the hit is visible |
+| A client-supplied timestamp accepted as-is | A backfilled log carrying a timezone lands among naive-local rows and every comparison against it is off by the offset | Refuse an aware value at the boundary and store naive local like its neighbours (`_poop_backfill_at`) |
 | Mixing a UTC timestamp with the DB's naive-local ones | `received_at` arrives UTC from the site; every deadline computed off it landed ~5h wrong, and nothing looked broken until an alert fired at the wrong hour | Convert once at the boundary, store local like its neighbours, and test the elapsed interval (SPEC-v18 law 4) |
 | `CREATE INDEX` on a column that only exists after a CHECK rebuild | SCHEMA `CREATE TABLE IF NOT EXISTS` leaves the old `agent_invocations` table; `CREATE INDEX ... (thread_id)` then fails before `run_migrations` can add the column | Put indexes that depend on migrated columns in `run_migrations`, after the rebuild (`idx_agent_invocations_thread`, `idx_transactions_account_key`) |
 | A recurring job that re-fires on every tick | A 15-minute sync with no fire-once guard pushes 16 alerts an hour | Stamp the row (`alerted_at`) when it fires, not when it succeeds |

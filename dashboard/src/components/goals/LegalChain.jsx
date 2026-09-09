@@ -6,11 +6,9 @@ const CHAIN_HINTS = [
   { match: /a2p|10dlc|twilio/i, short: 'A2P', key: 'a2p' },
 ]
 
-const DONE = new Set(['filed', 'obtained', 'approved', 'renewed', 'done', 'complete', 'signed', '1'])
-
-function stepState(goal) {
+function stepState(goal, doneStates) {
   const cv = (goal?.current_value || '').toLowerCase().trim()
-  if (DONE.has(cv) || cv.includes('auto-renew')) return 'done'
+  if (doneStates.has(cv) || cv.includes('auto-renew')) return 'done'
   if (cv === 'in progress' || cv === 'in_progress') return 'active'
   if (cv && cv !== 'not started') return 'active'
   return 'pending'
@@ -20,17 +18,17 @@ function findStep(goals, hint) {
   return goals.find((g) => hint.match.test(g.name || ''))
 }
 
-export default function LegalChain({ goals }) {
+export default function LegalChain({ goals, doneStates }) {
   const steps = useMemo(() => {
     const deadlines = (goals || []).filter((g) => g.kind === 'deadline')
     const chain = CHAIN_HINTS.map((hint) => {
       const goal = findStep(deadlines, hint)
-      return { ...hint, goal, state: goal ? stepState(goal) : 'missing' }
+      return { ...hint, goal, state: goal ? stepState(goal, doneStates) : 'missing' }
     }).filter((s) => s.goal || s.key === 'llc')
 
     if (!chain.some((s) => s.goal)) return null
     return chain
-  }, [goals])
+  }, [goals, doneStates])
 
   if (!steps?.length) return null
 

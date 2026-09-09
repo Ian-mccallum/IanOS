@@ -1,7 +1,22 @@
-# Anti-slop copy (2026-08-06)
+# Anti-slop copy (2026-08-06, taglines added 2026-09-02)
 
 Binding voice rule for ianOS UI, docs, and agent-facing prose. Origin: PRODUCT.md
-"Voice (anti-slop)" + osUI Copy section. Enforced in review; not a runtime gate.
+"Voice (anti-slop)" + osUI Copy section. The dash rules below are enforced in
+review only; the no-taglines rule (SPEC-v41) is also a runtime gate,
+`tests/test_mobile_ui.py::test_no_taglines`.
+
+## No taglines (SPEC-v41, 2026-09-02)
+
+Ian: "Get rid of all cliché text." A page title stands alone. A second line
+survives only when it carries data (a count, a date, a next time) or an
+instruction with a verb ("Tap any hour to add a block"); otherwise delete
+it, don't shrink it. Banned constructions: "one place for", "one workspace",
+"at a glance", "your X, one Y at a time", "workspace" as a noun for a page,
+any motto/whisper pool (an array literal named `*_WHISPERS`/`*_MOTTOS`/
+`*_TAGLINES`), any sentence that would read the same on a template. A
+page's name is its own description. 18 static subtitles and Partner's
+rotating whispers were the worst offenders; see
+`docs/SPEC-v41-arc-taglines-life.md` §3 for the full deletion list.
 
 ## What changed
 

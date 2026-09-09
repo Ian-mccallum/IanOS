@@ -108,12 +108,54 @@ def import_file(path: str | Path, inventory_path: str | Path = DEFAULT_INVENTORY
     return {**report, **seed, "events": len(events)}
 
 
+def seed_only(inventory_path: str | Path = DEFAULT_INVENTORY) -> dict:
+    """Reload the syllabus inventory alone, with no Canvas snapshot.
+
+    The `syllabus` provider's items come from `known_major_dates` in the
+    inventory file, and `seed_inventory` archives any syllabus item the file
+    no longer lists. So the file is the only correct place to add a deadline
+    the Canvas feed never carried (ANTH 210 is asynchronous; its weekly module
+    deadlines are on the module page, not in the .ics), and this is how that
+    edit reaches the database without waiting for a new .ics export.
+
+    It touches the `syllabus` and `school_schedule` providers only. Canvas
+    items are not read, rewritten, or archived here.
+    """
+    conn = db.connect()
+    try:
+        return school.seed_inventory_file(conn, inventory_path)
+    finally:
+        conn.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Import a local Canvas calendar .ics snapshot")
-    parser.add_argument("file", type=Path, help="Downloaded Canvas calendar .ics file")
+    parser.add_argument("file", type=Path, nargs="?",
+                        help="Downloaded Canvas calendar .ics file")
     parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     parser.add_argument("--dry-run", action="store_true", help="Validate and count without writing")
+    parser.add_argument("--seed-only", action="store_true",
+                        help="Reload the syllabus inventory without a Canvas .ics file")
     args = parser.parse_args()
+    if args.seed_only:
+        if not args.inventory.is_file():
+            sys.exit("School inventory file was not found.")
+        try:
+            report = seed_only(args.inventory)
+        except ValueError as exc:
+            sys.exit(f"School inventory could not be loaded: {exc}")
+        print(
+            f"Syllabus inventory reloaded: {report['courses']} courses, "
+            f"{report['syllabus_items']} syllabus items, "
+            f"{report['scheduled_meetings']} verified class meetings projected"
+        )
+        return
+    if args.file is None:
+        sys.exit(
+            "Give a Canvas .ics file, or use --seed-only to reload just the syllabus inventory:\n"
+            "  make import-canvas FILE=/absolute/path/to/calendarfeed.ics\n"
+            "  make sync-syllabus"
+        )
     if not args.file.is_file():
         sys.exit(
             f"Canvas calendar file was not found: {args.file}\n"

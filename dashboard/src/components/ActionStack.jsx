@@ -1,5 +1,6 @@
 import React, { memo, useState } from 'react'
 import { api } from '../lib/api.js'
+import StarMark from './StarMark.jsx'
 
 const ACTIVITY_FIELDS = new Set(['audit_calls', 'follow_ups'])
 
@@ -36,6 +37,12 @@ function ActionStack({
     }
   }
 
+  const completeTask = async (item) => {
+    const id = item.interaction?.ref_id ?? item.ref_id
+    await api(`/api/tasks/${id}/done`, 'POST', {}, { queueable: true })
+    refresh()
+  }
+
   const run = async (item) => {
     const interaction = interactionFor(item)
     if (interaction.type === 'navigate') {
@@ -44,6 +51,9 @@ function ActionStack({
       await onGymConfirm()
     } else if (interaction.type === 'activity_increment') {
       await bump(item)
+    } else if (interaction.type === 'task_complete') {
+      await completeTask(item)
+      return
     }
   }
 
@@ -85,6 +95,10 @@ function ActionStack({
                 onClick={() => run(item)}
                 disabled={itemBusy || (interaction.type === 'gym_confirm' && gymBusy)}
               >
+                {/* A starred task is Ian's own pick, not a system suggestion:
+                    it carries the same star he tapped on Life, so the two
+                    surfaces read as one thing. */}
+                {item.kind === 'task' && <StarMark on size={13} className="action-star" />}
                 {item.label}
                 {item.reason && <span className="action-sub">{item.reason}</span>}
               </button>

@@ -13,15 +13,16 @@ decisions, optimize for *low activation energy and no shame*, not feature count.
 
 Three cooperating parts, one SQLite file:
 
-1. **Agent runner** (`agents/`). 10 pop-culture-named AI agents run nightly on a
+1. **Agent runner** (`agents/`). 11 pop-culture-named AI agents run nightly on a
    shared memo "blackboard" and compose a daily brief (SPEC-v37 retired five:
    advisor merged into watchdog, archivist became a nightly function, family/
-   infra/publicist are inactive). Ian is CEO; agents READ, MEMO, and PROPOSE
+   infra/publicist are inactive; SPEC-v38 added an 11th, Mr. Miyagi). Ian is
+   CEO; agents READ, MEMO, and PROPOSE
    for anything hard to reverse (**nothing there executes without a human
    APPROVE**), plus a closed list of *reversible* Ring 1 acts (SPEC-v37 §4)
    that apply immediately, receipted and undoable.
 2. **Dashboard** (`dashboard/` + `api/`): a Vite/React mission control over a
-   FastAPI localhost API. Six life "pillars" plus a Command home.
+   FastAPI localhost API. Seven life "pillars" plus a Command home.
 3. **Ingest** (`ingest/`). CSV / SimpleFIN / SnapTrade / connector loaders that
    are the *only* writers for their data sources.
 
@@ -38,6 +39,7 @@ make plan           # DRY RUN: print who the dispatcher would wake tonight, $0.0
 make seed           # reseed demo data
 make import-leads   # load leads/enriched.csv into The Line (safe to re-run)
 make import-canvas FILE=/abs/path.ics   # import a downloaded Canvas .ics snapshot
+make sync-syllabus  # reload the school seed alone (deadlines Canvas never sent)
                     # local file only: never a feed URL, token, or password.
                     # add --dry-run via the script for a counts-only preview
 make export-leads   # write leads back to CSV with real call history
@@ -103,6 +105,20 @@ This is the security model, do not weaken it by moving rules into prose:
 - **Only `cfo` creates `money` proposals** (`NO_MONEY_PROPOSALS`, blocked inside
   `create_proposal`). **`wealth` never proposes trades** (`TRADE_VERBS` regex).
   **Only `chief` writes briefs / focus.**
+- **A tool's optionality lives in its SCHEMA, never in its description**
+  (Ian, 2026-09-09). The SDK's dict-style schema (`{"goal_id": int}`) marks
+  **every** key required (`required: list(properties.keys())`), so
+  `chat_write_plan_block` advertised "goal_id optional" in prose while
+  demanding one in the contract. Alfred was asked to put dinner and
+  stargazing on the plan, found no honest goal to link, and refused rather
+  than misattribute progress to a real goal: correct behaviour against a
+  lying schema. `_schema()` in `runner.py` builds a real JSON Schema (which
+  the SDK passes through verbatim) where **`T | None` means optional** and
+  `Annotated[T, "..."]` documents the parameter where the model actually
+  reads it. A guardrail written only in prose loses to the machine-readable
+  schema every time. `tests/test_agents_guards.py` asserts both directions:
+  nothing described as optional may be required, and the genuinely required
+  arguments stay required.
 - **Every number must trace to a table row.** Read-tools return raw rows *plus*
   code-computed aggregates; date math for `watchdog`/`physician`/`steward`/`chief`
   is precomputed in Python in `build_user_prompt`, not left to the model.
@@ -135,11 +151,14 @@ This is the security model, do not weaken it by moving rules into prose:
 > is decided in code, per act type, never by a model describing its own intent.
 
 - **Ring 0 — Read.** Unchanged: domain-scoped, wall-enforced `read_*` tools.
-- **Ring 1 — Reversible acts** (`core/acts.py`). A closed list of 13 `act_*`
+- **Ring 1 — Reversible acts** (`core/acts.py`). A closed list of 16 `act_*`
   tools (`plan_block.create/move/delete`, `note.create`, `partner_task.create/
   complete`, `gym.confirm`, `activity.log`, `goal.rebaseline`, `goal.archive`,
-  `transaction.recategorize`, `fact.flag_unverified`, `attention.snooze`) apply
-  **immediately, no approval**, each one **receipted** into `agent_acts`
+  `transaction.recategorize`, `fact.flag_unverified`, `attention.snooze`,
+  `task.create/complete` — SPEC-v41, `task.create` capped at two per night,
+  both granted to `steward` only, `learning.confirm` — SPEC-v38, granted to
+  `tutor` only, mirrors `gym.confirm`'s today-only/never-grace-or-reset
+  scope exactly) apply **immediately, no approval**, each one **receipted** into `agent_acts`
   (`_apply()`'s shared transaction: the act's write and its receipt commit
   together or not at all) and **undoable** (`undo_act`, one inverse handler per
   act type). `RING1_GRANTS` in `core/acts.py` decides which role gets which
@@ -228,8 +247,23 @@ was always context, not a mode.
   fact), each child's tools are `interactive_allow(role)` intersected with
   the parent thread's own already-granted set. A `SubagentStop` hook plus
   `get_subagent_messages()` build the `specialists[]` attribution list.
-- **One agent per thread.** `chat_threads.role`; creating a thread closes
-  only the previous thread for *that* role. `chat_allow(chips, role)` is
+- **One agent per thread, many threads per agent (SPEC-v40 §3-5).**
+  `chat_threads.role`; creating a thread **no longer closes** the role's
+  other OPEN threads (SPEC-v26's one-open-thread law is repealed). A role's
+  current thread is its newest OPEN one; **New chat** starts another; a
+  CLOSED (archived) thread accepts exactly one patch, `status=OPEN`, and
+  refuses turns until reopened. `title` is server-set from the first question
+  (never model-written). **Memory across threads is a stored summary:**
+  `POST /api/chat/threads/{id}/compact` runs one zero-tool, single-turn,
+  model-pinned-in-code summarizer (`_chat_thread_summary_reply`, the study
+  worker's shape), stores `summary` / `summary_turn_count` / `compacted_at`,
+  and **clears `sdk_session_id`** so the next turn opens a fresh session whose
+  history is the summary; turn rows are never deleted. The same path fires
+  automatically at `CHAT_COMPACT_AUTO_TURNS`, and New chat summarizes the
+  outgoing thread in the background. `_chat_user_prompt` renders COMPACTED
+  CONTEXT (fresh session only) and EARLIER THREADS WITH THIS AGENT (first
+  turn only, **same role only**, bounded), both framed as untrusted quoted
+  memory. Prune keeps a thread with a summary. `chat_allow(chips, role)` is
   role-aware: a chip never widens an agent past its own interactive
   allowlist. Unknown/inactive role is 422.
 - **Four plan models** (`haiku, sonnet, opus, fable`) and four effort levels
@@ -246,24 +280,42 @@ was always context, not a mode.
   never granted.
 - **No cooldowns.** Refusal is 409 while a turn on that thread is
   QUEUED/RUNNING, plus the shared `AgentExecutionGate`. Chat prunes at 30 days.
-- **Chat writes no memos, facts, briefs, or focus.** The six-domain
-  instant-write exception (`chat_write_allow`, SPEC-v29) still stands, plus
-  one new member: `chat_write_learning_profile` does not exist yet (that's
-  SPEC-v38, not shipped). File in Inbox records an inert `task` proposal as
-  `role='ian'`. Nothing from chat enters `/api/state`.
+- **Chat writes no memos, facts, briefs, or focus.** The instant-write
+  exception (`chat_write_allow`, SPEC-v29) carries eight tools now, not six:
+  `chat_write_task` joined the family in SPEC-v41 (Life's to-do, see "The
+  day arc, the tagline purge, and Life's to-do" below), and
+  `chat_write_learning_profile` joined in SPEC-v38 (see "Mr. Miyagi and the
+  Learning pillar" below) as the family's first **role-scoped** member: every
+  other tool in the set reaches every role's thread alike, but this one is
+  `tutor`-only (`chat_write_allow` strips it from the shared set and adds it
+  back only for `role == "tutor"`). File in Inbox records an inert `task`
+  proposal as `role='ian'`. Nothing from chat enters `/api/state`.
 - **Anti-slop is enforced in code**: `strip_em_dashes()` rewrites em/en
   dashes in every reply and now in every brief (`write_brief`, SPEC-v37 §8.3).
 - **UI: the portal dock** (`dashboard/src/components/AgentChat.jsx`). One
   mount in `App.jsx`, still (**Law A10 — position is a portal, lifecycle is a
   mount**: the thread must survive a tab switch). `CommandPage.jsx` renders
   `<div id="consult-dock-slot">`; `AgentChat` `createPortal`s into it when
-  Command is active, or renders its own fixed re-entry pill/panel otherwise.
-  Three states, held in `sessionStorage` only (never a route): **dock**
-  (inline under the Order), **expanded** (desktop: grows inline via the
-  portal target, page scrolls behind, no backdrop; mobile: a Sheet at
-  85dvh), **full screen** (a real modal takeover both platforms). Roster
-  "Ask X" and record Inspect both go through one `consultRequest` hand-off
-  in `App.jsx` (`{role, seedText, view}`), never a second seeding path.
+  Command is active. **SPEC-v40 §2 cut the states to two**, held in
+  `sessionStorage` only (never a route): **dock** (phone: one 44px summary
+  row under the Order, no composer, no nested scroller; desktop: the last
+  exchange plus composer, no inner scroller) and **open** (phone: the
+  conversation is the whole screen, a Sheet stretched to the viewport with
+  the composer pinned above the keyboard and safe area; desktop: a
+  right-anchored drawer the page stays usable behind). The conversation is
+  one flex column, header / stream / composer; the stream is
+  `column-reverse` so nothing ever jumps and no scroll effect exists; no
+  `vh` literal is allowed in chat CSS. The composer is never re-parented on
+  focus (that unmounted the textarea and dropped the iOS keyboard). Desktop
+  Enter sends, Shift+Enter newlines; phone Enter newlines and only the 44px
+  send sends. Context / Reasoning / Threads / File sheets are **siblings**
+  of the conversation, and `Sheet.jsx` lets only the topmost open sheet
+  answer Escape. The `--agent` colour tokens live on `.consult-panel`
+  (`.agent-chat` rendered nowhere, which is why Ian's bubble never painted).
+  Roster "Ask X" and record Inspect both go through one `consultRequest`
+  hand-off in `App.jsx` (`{role, seedText}`), never a second seeding path.
+  The chat UI polls the **thread detail** (`GET /api/chat/threads/{id}`) for
+  a running turn; `/api/agent-invocations` is gone.
 - **The persona is tested.** `tests/test_chat_persona.py` asserts layer
   order, roster coverage, and the nightly/daytime split always; live
   behavioural probes run under `IANOS_PERSONA_EVAL=1`.
@@ -356,9 +408,12 @@ and the traps that have shipped here.
   `connect()`), migrations, and all query helpers. No ORM. Key tables:
   `transactions, holdings, activity, health_daily, calendar_events,
   focus_allocations, memos, proposals, briefs, goals, facts, content_log,
-  partner_tasks, streak_events, documents, ingest_log, plan_blocks, plan_tombstones,
+  partner_tasks, tasks, streak_events, documents, ingest_log, plan_blocks, plan_tombstones,
   journal_entries, notes, leads, lead_touches, call_runs, agent_invocations,
-  chat_prefs, chat_threads, agent_acts, attention_snoozes, memory_fts`. Chat
+  chat_prefs, chat_threads, agent_acts, attention_snoozes, memory_fts,
+  poop_log`. `tasks`
+  is Life's daily to-do (SPEC-v41), deliberately not `partner_tasks`: rolling is
+  a read (`db.tasks_today`), never a nightly write. Chat
   turns are `agent_invocations` rows (`mode='chat'`, `invocation_kind='chat_turn'
   |'chat_child'`) with `thread_id`. `agent_acts` is the Ring 1 receipt ledger
   (SPEC-v37 §4.5); `chat_threads.sdk_session_id` backs native session resume
@@ -377,9 +432,17 @@ and the traps that have shipped here.
 - `agents/consult_gate.py`, the Plane B runtime capability wall (SPEC-v37
   §2.2-2.6): `make_consult_gate()`/`make_consult_pretooluse_hook()`,
   `CONNECTOR_WRITE_TOOLS`, the `data/consult/` workspace constants.
+- `core/learning.py`, Learning's isolated schema (SPEC-v38 §2, the
+  `core/school.py` precedent): `learning_topics`, `learning_sessions`
+  (`date UNIQUE`), `learning_streak_events`, and its own `compute`/
+  `apply_grace`/`sync_confirms` mirroring `core/streaks.py`'s SPEC-v34
+  mechanic against its own table only (Law B1).
 - `core/metrics.py`, turns goals into live status. A goal's `metric_key` maps to
   a resolver in `METRIC_RESOLVERS` (e.g. `burn_this_month`, `audit_calls_today`,
-  `gym_weekdays_this_week`) that computes its actual from tables;
+  `gym_weekdays_this_week`, and SPEC-v41's `tasks_done_this_week` /
+  `tasks_done_for_goal`, Life's first two) that computes its actual from
+  tables; every resolver takes `(conn, goal)`, not just `(conn)`, so a
+  per-goal resolver like `tasks_done_for_goal` is possible at all.
   `resolve_goal_actuals()` + `goal_status()` produce ON/OFF TRACK / AT RISK / NO
   DATA. Also `compute_tradeoff_hints`, `stale_data_domains`, `finance_state`
   (checking freshness now traces to the source that actually produced the
@@ -388,10 +451,12 @@ and the traps that have shipped here.
   every caller shares (assets minus credit/loan balances across every linked
   account); `db.cash_position()` is a rolling 30-day net flow over the linked
   account set (`account_key != ''`), not a sum since the first import ever.
-- `core/pillars.py`, presentation layer that groups goals into the six dashboard
-  pillars (`btc, body, partner, school, life, money`). Note the domain→pillar
-  mapping is NOT 1:1: `personal` splits into **partner** vs **life** by a `#partner`
-  note tag / name match (`is_partner_goal`).
+- `core/pillars.py`, presentation layer that groups goals into the seven
+  dashboard pillars (`btc, body, partner, school, life, learning, money`). Note
+  the domain→pillar mapping is NOT 1:1: `personal` splits three ways by tag/
+  name match: **partner** (`#partner` note tag / name match, `is_partner_goal`),
+  **learning** (`#learning` note tag, `is_learning_goal`, SPEC-v38 Law B3 —
+  never a `goals.domain` value), and **life** is what's left over (neither).
 - `core/streaks.py`, the "bending" gym streak. Stores **events, not tallies**
   (`streak_events(date, kind)` where kind ∈ `confirm|grace|reset`). The nightly run
   is the ONLY writer of `grace`/`reset` and is idempotent; missing a weekday spends
@@ -415,8 +480,9 @@ and the traps that have shipped here.
   proxies `/api` → `:8787` (`dashboard/vite.config.js`).
 - React 18 + `motion`, **no router**: pages are hash-based (`usePage` in
   `App.jsx`, `PAGES` array). Pages in `dashboard/src/pages/`, shared bits in
-  `components/` (`CommandPalette` = Cmd+K, `PillarStrip`, `ActionStack`, goal
-  wizard under `components/goals/`). `lib/api.js` wraps fetch. When a mutation
+  `components/` (`CommandPalette` = Cmd+K, `PillarStrip`, `ActionStack`,
+  `DayArc` (SPEC-v41), goal editing under `components/goals/`). `lib/api.js`
+  wraps fetch. When a mutation
   writes back, the API also drops a memo from `"ian"` so agents learn his judgment.
 
 ### Ingest is the write boundary (`ingest/`)
@@ -485,6 +551,55 @@ API (SPEC-v11 overturned laptop-only):
   streak that can break), the exhale is the reward.
 - **Agent visibility:** physician + chief get one `agent_signal` line ("closed the
   day N of 7"), never the words. Shared entries arrive as ordinary `ian` memos.
+
+### Body's log (Ian, 2026-09-09)
+
+A poop counter on Body. Small on purpose: one table, one panel, no new page
+and no spec file. The four product calls are Ian's, made before any code:
+health agents see it, one tap with optional detail, Body page only, and the
+surface reports count + 7-day rail + last time.
+
+- **Data:** `poop_log`, **events not tallies** (the `streak_events` /
+  `lead_touches` precedent). The day's count is always `COUNT(*)` over live
+  rows, never a stored number, which is what makes Undo a soft delete that
+  restores the same row instead of a decrement that can drift. `day` is
+  stamped **at the tap**, not derived from `logged_at`, so a tap made with
+  the Mac asleep still counts for the day it happened. `bristol` (1-7) and
+  `note` are the optional second beat; a one-tap log leaves both empty.
+- **One writer: the `/api/poop` routes, i.e. Ian's taps.** No agent tool
+  writes this table, no Ring 1 act touches it, and a test asserts both.
+- **Not in `/api/state`.** It rides its own `no-store` routes for the same
+  reason the sleep and step values do: state is polled every 15s and cached
+  by the phone's service worker. `db.poop_state()` is the one read path the
+  panel, the rail and the agent aggregate all share. The tap is `queueable`.
+- **The backfill is a first-class door, not a repair.** Forgetting at 10am
+  and remembering at 6pm is the normal case, so `POST /api/poop` takes a
+  `logged_at`. Bounded in code by `POOP_BACKFILL_MAX_DAYS` (14), never in the
+  future, and **naive-local only** (SPEC-v18 law 4: one aware timestamp among
+  naive rows shifts every comparison and nothing looks broken until it
+  matters). A backfill names its own day; the state returned is always the
+  day the panel is showing, so adding one to yesterday moves the rail without
+  replacing today's count. `lib/poop.js` mirrors both bounds so the refusal
+  arrives before the tap, not as a 422 after it.
+- **Agent visibility:** counts, the 7-day per-day average, the Bristol mix
+  and hours-since-last are folded into `read_health`, so they inherit its
+  existing health-AI consent gate, and every number is computed in Python.
+  **`note` is withheld**: writing Ian types about himself follows the
+  journal/notes wall, not the sensor rule.
+- **UI:** `components/PoopLog.jsx` on Body, inside `.body-training-column`.
+  It is **not** a `.panel` (that class carries no padding of its own and
+  clips with `overflow: hidden`, which would eat the burst); it is its own
+  surface, the `.health-signal` precedent. `components/PoopMark.jsx` is the
+  one poop in the product, **drawn, not the emoji glyph** (the `StarMark`
+  reason: an emoji is a font, renders as whatever face the OS ships, and
+  cannot take the app's material). The button is centered rather than beside
+  the tally because the burst throws coils ~62px either side and a
+  right-aligned button would put that past the panel edge at 375px.
+- **Design law:** `--crit` is banned here (`--warn` is the worst state, on
+  the backfill bound); no target, no percentage, no streak, no lifetime
+  counter. The day's line reacts to volume and nothing else, so no state it
+  can reach reads as a verdict on Ian. `tests/test_poop.py` and
+  `dashboard/tests/poop-log.ui.test.jsx` assert that.
 
 ### The Line (SPEC-v9): lead pipeline + the call loop
 
@@ -666,7 +781,7 @@ dashboard *and* the nightly run in one place. Any new goal query must go through
 `all_goals()` or repeat that filter. Undo restores the same row on purpose:
 metrics resolve off goal ids, so a re-created goal is not a restore.
 
-**The roster** (`#roster`, under More) shows the 10 active agents with their
+**The roster** (`#roster`, under More) shows the 11 active agents with their
 glyph, codename, cadence and track record. `db.role_stats()` derives that
 from existing `proposals` + `memos` rows : no new table, no new writes. The
 record is the *agent's* ("you took 2 of 4"), never a score on Ian; pending
@@ -676,6 +791,148 @@ role (physician, coach) shows `"off, health sharing"` instead of a stale
 server-side in `_roster()`), rather than reading as merely asleep. Agent
 colour and glyph live in `dashboard/src/lib/agents.js` only : App.jsx used to
 keep a second copy of the colour table, and two tables drift.
+
+### The day arc, the tagline purge, and Life's to-do (SPEC-v41)
+
+Ian, on three header screenshots: "Those bars are ugly and useless." Shipped
+in five phases, each its own commit; `docs/SPEC-v41-arc-taglines-life.md`
+carries the audit and the per-phase build protocol.
+
+- **The header becomes one arc plus one pulse.** `GET /api/state` gains a
+  code-computed `header` key (`api/main.py::_header_projection`): `arc`
+  (today's `plan_blocks` + timed `calendar_events`, clamped to a 06:00-24:00
+  window, plus the next block/commitment's label and time) and `pulse`
+  (newest-memo age -> breathing accent / static warn / dim hollow, ringed
+  when `data/backup/last_success` is stale and backup is configured).
+  `dashboard/src/lib/dayArc.js` (`dayArcLayout`, `minutesUntil`,
+  `pulseState`) is pure and unit-tested; `DayArc.jsx` renders it. The status
+  dot, "Agents ran Xm ago", focus chips, the "Nd to client" countdown, and
+  the 1Hz clock are deleted outright, not hidden : each already duplicated
+  something else already on screen. **The pulse's worst state is `--warn`,
+  never `--crit`** (`test_pulse_never_crit` greps `dayArc.js` for the literal
+  string, since the dot rides on Plan/Journal/The Line where crit is banned).
+- **No taglines, enforced in code.** `tests/test_mobile_ui.py::test_no_taglines`
+  strips `.jsx` comments and fails on banned constructions ("one workspace",
+  "at a glance", a `, one X at a time` pattern, "everything else", or an
+  array literal named `*_WHISPERS`/`*_MOTTOS`/`*_TAGLINES`) across every file
+  under `dashboard/src`. The rule already lives in the `osui` skill and this
+  file's Anti-slop bullet; this is its executable half. A second line
+  survives only when it carries data (a count, a date) or an instruction
+  with a verb.
+- **Life gets a daily to-do, its own table.** `tasks` (`core/db.py`) is
+  deliberately not `partner_tasks`: no time slot (that's a plan block), no
+  target (a goal), no partner. `db.tasks_today(conn, today)` is the single
+  read path `/api/state`, `read_tasks`, and the Order all share; rolling an
+  unfinished task forward is that read (`due_date <= today`), **never a
+  nightly write**. Priority is `0|1`, not a scale: `1` promotes a task into
+  `core/attention.py`'s Order as a band-2 `task_complete` candidate that
+  **never ages into a higher band** (rolling is silent by design). Only
+  Ian's tap sets priority; there is no code path from a nightly Ring 1 write
+  to `priority=1` (`db.create_task(..., priority=0, ...)` is hardcoded
+  inside the act). Three doors, the `partner_tasks` precedent: `chat_write_task`
+  (attended, one of chat's instant-write exceptions — see the consult
+  surface section above), Ring 1 `task.create` (capped at two per night) /
+  `task.complete` (`core/acts.py`, granted to `steward` only), and
+  `read_tasks` (read-only, `steward`/`watchdog`/`chief`, the `read_notes`
+  pattern). `dashboard/src/components/TodayPanel.jsx` is the UI, rebuilt on
+  Reminders' interaction model after Ian's "when I add I don't know where it
+  goes": one hairline-separated list of `.trow`s inset to the title column,
+  a drawn 22px `CheckRing` inside a 44px target, tap-the-title-to-rename in
+  place (`PATCH {title}`, Escape cancels), and a composer that is the list's
+  last row (`+` where the ring goes) and **keeps focus after Enter** so a
+  second line costs nothing. The `!` became a drawn star
+  (`components/StarMark.jsx`, the one star in the product, reused on
+  Command's deck so a promoted task reads as Ian's own pick); starring
+  toasts `starred · now on Command`, because the dot flying to the Command
+  tab icon (`App.jsx`'s `FlyingDot`, `[data-nav-id]` on `Nav.jsx`'s links —
+  the icon exists twice in the DOM at once, desktop rail and mobile bar, so
+  the rect lookup takes the first copy that's actually laid out) is
+  suppressed under reduced motion and easy to miss. **The completion is the
+  surface's one authored moment and it is pure CSS** (ring warms, tick
+  draws, title strikes): a JS entrance or `layout` animation on these rows
+  bought nothing and stranded every row at `opacity: 0` when the tab was
+  backgrounded at mount, since rAF is paused there.
+- **Goals get a prompt, not a wizard.** `GoalWizard.jsx`'s three-step flow is
+  gone; `components/goals/GoalSheet.jsx` is one `Sheet` dialog: describe the
+  goal in a sentence, an optional **role-less** Draft (`POST /api/goals/draft`)
+  fills name/shape/deadline/metric/first-steps via a zero-tool, single-turn,
+  model-pinned-in-code Haiku call (the `_chat_thread_summary_reply` shape,
+  no persona, no live state, no memo, no receipt — a draft is a parse, not a
+  consult) and **never writes**. Milestone is a UI shape only, saving as
+  `kind='deadline'` with an empty target so a one-time goal never needs a
+  fake number. `db.create_goal` is now the **one** `INSERT INTO goals` in
+  the codebase (`test_one_goal_insert`); both `POST /api/goals` and
+  `chat_write_goal` call it, and both validate `metric_key` against
+  `metrics.METRIC_RESOLVERS` (422 on an unknown key) before they do.
+
+### Mr. Miyagi and the Learning pillar (SPEC-v38)
+
+School (SPEC-v36) answers what UIUC requires; Learning answers what Ian
+decided to get good at on his own (case interviews, AI, Python were his own
+examples). Shipped in four phases, each its own commit;
+`docs/SPEC-v38-learning.md` carries the audit and the per-phase build
+protocol. Deliberately a composition of six things that already existed in
+a different shape (a bending streak, a schema isolated from `core/db.py`'s
+migrations, a pillar that is a filter not a `goals.domain` value, a Ring 1
+act, a role-scoped chat instant-write, the consult surface), not a new
+interaction engine.
+
+- **An 11th nightly role, Mr. Miyagi (`tutor`)**, `daily` tier, domain
+  `personal`, following CLAUDE.md's unchanged three-edit process (role file,
+  `ALLOWLISTS` entry, `SEQUENCE` slot — between `watchdog` and `counsel`).
+  Its whole nightly job is narrow: read `read_learning`'s working profile for
+  tonight's topic (chosen for it in Python, never by the model) and write one
+  concrete exercise with `write_learning_task`. Zero active topics is not an
+  error, it says so in one line and writes nothing.
+- **`core/learning.py`, its own schema, the `core/school.py` precedent.**
+  `learning_topics` (`clarifying → active → archived`, never automatically:
+  only `chat_write_learning_profile`, inside a `tutor` thread, flips
+  `clarifying` to `active` — Law B2, onboarding is inert until the profile
+  lands), `learning_sessions` (`date UNIQUE`: exactly one featured task
+  system-wide on any given day, the same "one yes/no fact" shape the gym
+  streak reads), `learning_streak_events`. **Law B1, a mirror is a copy,
+  never a shared row**: the streak mechanic structurally mirrors
+  `core/streaks.py`'s SPEC-v34 weekly rest-day allowance (2 rest days/week,
+  every calendar day tracked, no weekday exception) but reads and writes its
+  own table only, no code path shares a row with the gym streak. The nightly
+  run marks yesterday's still-`open` session `skipped` before writing
+  tonight's row (`skip_stale_sessions`, closed in code, not left to the
+  model).
+- **Ring 1: `learning.confirm`**, granted to `tutor` only, mirrors
+  `gym.confirm` exactly (today only, one `confirm` event, never grace/reset).
+  Ian's own dashboard-side confirm (`POST /api/learning/sessions/today/confirm`)
+  is a second door that never touches `core/acts.py`, the same split
+  `gym.confirm` already has.
+- **Onboarding is an ordinary consult thread**, scoped to `tutor`, seeded via
+  the exact `{role, seedText}` `consultRequest` shape SPEC-v37/v40 built (no
+  `view` key, per SPEC-v40's own ruling). The tutor asks real clarifying
+  questions before it ever calls `chat_write_learning_profile`; Mr. Miyagi
+  may suggest a topic via an ordinary `create_proposal`, but never creates a
+  `learning_topics` row itself, Ian always runs the clarification pass
+  himself even for a topic the agent suggested.
+- **Pillar routing widens no schema** (Law B3). `core/pillars.py` and
+  `dashboard/src/lib/pillars.js` (hand-kept mirrors, no shared source, the
+  same trap CLAUDE.md already warns about) gained a third split of the
+  `personal` domain: `is_learning_goal`/`isLearningGoal` check for a
+  `#learning` note tag, and `life`'s branch now excludes it. `goals.domain`'s
+  CHECK constraint is untouched; a `learning:*` fact topic routes to
+  `personal` via `NAMESPACE_DOMAINS`, the `training`/`market` precedent. The
+  pillar's status is always `ON TRACK` (the partner precedent: a self-directed
+  practice streak is context, never a scolding state).
+- **`dashboard/src/pages/LearningPage.jsx`**: today's featured task as its
+  own `.today-row`/`.today-row--practice` component (visually modeled on
+  Life's task row but structurally its own, since a practice row opens a
+  thread and has neither a checkbox nor a priority toggle), topic cards with
+  a per-topic `GrowthMark` (`dashboard/src/components/GrowthMark.jsx`, 5
+  growth stages keyed to cumulative *confirmed* sessions, never the streak
+  which can legitimately reset, floor 1 cap 5, no number ever printed next
+  to it), a "suggested by Mr. Miyagi" card surfacing any pending
+  `role='tutor'` `task`-kind proposal, and a single "Add a topic" field
+  (reuses `GoalSheet`'s `gf-field gf-grow` class) with no Draft button:
+  Enter creates the `clarifying` row and opens the thread. Behind More, like
+  every other non-fixed-tab pillar; add a new page's own `PAGE_TITLES` entry
+  in `App.jsx` or it silently falls back to "Command", a bug live browser
+  verification caught that no unit test would have.
 
 ### Lock screen (SPEC-v12) + brand icons
 
@@ -769,19 +1026,79 @@ the academic term can be reshaped without touching money, leads, or journal.
   `school_ai_settings` is one local consent row; `create_school_study_artifact`
   refuses without it, `claim_school_study_artifact` re-checks it inside the
   claiming UPDATE, and `complete_school_study_artifact` refuses to save if
-  consent was withdrawn while the model ran. A course whose `policy_json` says
-  `ai_policy.status == "prohibited"` is blocked server-side, not in the UI.
-  The worker gets `tools=[]`, every ianOS tool explicitly disallowed, and note
+  consent was withdrawn while the model ran. **A course's own AI policy does
+  not gate study tools** (Ian, 2026-09-09): study aids are built from his own
+  notes for his own revision, `policy_json.ai_policy` is now display metadata
+  on the School page, and consent is the only wall. `_school_course_blocks_
+  study` is deleted, not merely unused; `test_a_course_ai_policy_does_not_gate_
+  study_tools` asserts the policy stopped mattering AND that the consent gate
+  did not leave with it. The worker gets `tools=[]`, every ianOS tool explicitly disallowed, and note
   text as untrusted data; failures persist only a closed error code, never an
   SDK message (which can quote note content). Any edit bumps `revision` and
   marks prior-revision aids `STALE`.
+- **The course rail is ordered by the next class, never the alphabet**
+  (Ian, 2026-09-09). `dashboard_snapshot` sorts `courses` on the
+  `next_meeting.start_at` it already computes, so today's classes lead in
+  time order and the list walks forward through the week; a course with no
+  meetings at all (ANTH 210 is asynchronous) sorts last. `next_note_launches`
+  starts at today 00:00, so a class that already met today stays ahead of
+  tomorrow's instead of jumping to the back the moment it ends.
+- **Notebook search is the server's, over the whole note text.**
+  `list_note_sessions(q=...)` always searched `plain_text`, but the UI
+  filtered client-side over the 280-character `preview`, so a word written
+  later in a lecture never matched and the search read as broken. The rows now
+  carry `match_count` / `matches` (`_note_match_snippets`: the sentence around
+  each hit, the matched text as WRITTEN not as typed, plus head/tail flags so
+  the UI renders an ellipsis without doing offset math), and `_like_escaped`
+  means a typed `%` searches for itself instead of returning every note.
+- **The writing surface** (SPEC-v36 plus Ian, 2026-09-09). Full screen hides
+  the nav AND `.school-notebook-head` (its actions were pinned top-right,
+  where the new fixed `.school-fs-bar` lives, and the two stacked); the bar
+  carries Notes / Details / Files / Finish / Exit, with the sessions rail
+  rendered into a Sheet because full screen hides the rail itself. The measure
+  is 80ch normally and 100ch in full screen, not a full bleed: past ~100
+  characters the eye stops finding the start of the next line. **Cmd+B with
+  nothing selected bolds the whole line** (the editor default only flips the
+  stored mark at the caret, which looked like nothing happened) and **Cmd+P
+  toggles a bullet list** (Cmd+Shift+P numbered). `SchoolShortcuts` needs its
+  `priority: 1000` to outrank StarterKit, which binds Mod-b itself and Mod-y
+  to redo; returning true from the handler preventDefaults Cmd+P, so the
+  browser print dialog never opens in a note. The placeholder is Tiptap's
+  `Placeholder` decoration now, not an absolutely positioned `<p>` over the
+  prose that only vanished when React happened to re-render and otherwise sat
+  underneath what was being typed. **Placeholder and SchoolShortcuts are safe
+  additions to `SCHOOL_EXTENSIONS` because neither declares a node or a
+  mark**; anything that does needs the Python allowlist extended in the same
+  commit, and the parity test asserts it.
+- **A deadline Canvas never sent goes in the seed, not the table.**
+  `known_major_dates` in `data/fall_2026_school_seed.json` is the source for
+  the `syllabus` provider, and `seed_inventory` archives any syllabus item the
+  file no longer lists, so hand-inserting a row is erased on the next load
+  exactly as it would be under `canvas_ics`. `make sync-syllabus`
+  (`import_canvas_calendar.py --seed-only`) reloads that file alone, touching
+  the `syllabus` and `school_schedule` providers only. **Give every new entry
+  an explicit `id`**: without one the loader derives `external_item_id` from
+  LIST POSITION (`milestone-{position}`), and `school_item_completions` is
+  keyed on that, so inserting an entry mid-list silently re-keys every later
+  item and orphans its completions. ANTH 210's existing six are now pinned to
+  the ids they already had, for that reason.
 - **Private course files** live in `school_note_assets` under `data/school/`
   (gitignored, claimed by `scripts/backup.sh`). Extension + declared MIME +
   **actual magic bytes** must agree, storage keys are server-minted and never
   client input, downloads are always `attachment` with `nosniff`, and neither
   the token nor the storage path appears in any JSON projection.
-- **Agents see metadata only.** `agent_snapshot` projects course/deadline
-  fields; note documents, plain text, study output, and files never cross it.
+- **Agents see metadata only, with one attended exception.** `agent_snapshot`
+  projects course/deadline fields; note documents, plain text, study output,
+  and files never cross it. The exception: in a **consult** (Plane B, Law A1)
+  a **watchdog** thread may call `read_school` with `notes=true` and get the
+  plain text of recent class notes via `school.agent_note_texts()`, gated in
+  code by the run context's `plane == "B"` (set only by `run_chat_turn`) and
+  the same `school_ai_settings` study-mode consent that gates study aids.
+  (The per-course policy check that used to be a third gate here went with
+  the one above.) A nightly run passing
+  `notes=true` gets the metadata snapshot and nothing else, silently. Text
+  only: no ids, document JSON, asset keys, or Canvas identifiers. Dumbledore
+  threads open with the School chip on (`CHAT_DEFAULT_CHIPS_BY_ROLE`).
 
 ### Phone PWA ops
 
@@ -859,6 +1176,20 @@ bash + restic + sqlite3 only, so it moves to the Linux Framework laptop with a
 10-line systemd timer (in BACKUP.md). `tests/test_backup.py` asserts the laws
 against a local throwaway repo, skipped when restic is absent.
 
+**A LaunchAgent's program must be a binary macOS lets it read the repo with,
+and "it writes a memo on failure" cannot cover a failure to start.** The repo
+lives under `~/Desktop`, a TCC-protected folder; a job whose program is
+`/bin/bash` gets `Operation not permitted` and exits 126 **before**
+`backup.sh` runs, so its ERR trap never fires and no memo is written. That is
+how the nightly backup was silently dead from 2026-08-11 to 2026-09-09 while
+every other job ran fine: they all exec `.venv/bin/python`, which has the
+grant, and the backup was the only one on `/bin/bash`.
+`ops/com.ianos.backup.plist` now launches through the venv python and
+`os.execv`s bash, because TCC responsibility survives an exec. The engine is
+still bash + restic + sqlite3; the shim is a macOS launcher, and Linux's
+systemd unit calls the script directly. The signal that did survive is
+Command's agent pulse, which rings when the last success is over 48h old.
+
 ### Two repos: the private one and the public mirror (SPEC-v39)
 
 The private repo is `Ian-mccallum/ianOS-private` (renamed from `ianOS` on
@@ -868,7 +1199,9 @@ repo by `make export-public`
 (`scripts/export_public.py` plus templates in `scripts/public_export/`, both
 private and never exported). Nothing is developed in the mirror: a fix lands
 in the private repo, then the mirror is rebuilt and pushed from
-`../ianOS-public`. **Never flip the private repo public and never push its
+`../ianOS-public` (that is only the local checkout's directory name, chosen
+because `ianOS` is taken by this checkout; the GitHub repo is plain
+`Ian-mccallum/ianOS`). **Never flip the private repo public and never push its
 history anywhere public**: that history holds a server log with tailnet
 addresses and the real class schedule. If you are reading this inside the
 mirror, you are looking at a snapshot; open an issue rather than a PR.
@@ -926,7 +1259,10 @@ The full law, the substitution map and the publish procedure live in
 - Ian-facing tone is blunt: numbers first, verdict, next action (`SHARED_RULES` in
   `runner.py`). Persona is seasoning, not content; if voice fights clarity,
   clarity wins.
-- **Anti-slop:** no em dashes, no marketing fluff. See `docs/ANTI-SLOP.md` and
+- **Anti-slop:** no em dashes, no marketing fluff, **no taglines**: a page
+  title stands alone, and a second line exists only to carry data or an
+  instruction (never "One workspace for the week", "Your day at a glance").
+  See `docs/ANTI-SLOP.md`, the `osui` skill's Copy section, and
   `PRODUCT.md` Voice. UI empty values use ASCII `-`.
 - `docs/SPEC-v39-public-mirror.md` (private, never exported) is the public
   mirror's law: how `make export-public` scrubs the private repo into
@@ -971,8 +1307,26 @@ The full law, the substitution map and the publish procedure live in
   surface and `agents/consult_gate.py`, the roster retirement down to 10, and
   the money/health hardening in §8. Shipped in six phases, each its own
   commit; read its §11 for the phase boundaries and §12 for the laws each
-  phase's tests assert. `docs/SPEC-v38-learning.md` is a drafted, **not yet
-  built** spec for a "Learning" pillar (personal topics like case interviews,
-  Python, AI — deliberately not school coursework); read it before starting
-  that work, it is not implied by anything above. `docs/PHONE.md` is
+  phase's tests assert. `docs/SPEC-v40-chat-threads-and-layout.md` is the chat rebuild that
+  supersedes SPEC-v37 §7.2's three states and SPEC-v26's one-thread law
+  (durable threads, summaries, Compact, the phone-first layout; read its §1
+  audit ledger before touching `AgentChat.jsx`). `docs/SPEC-v41-arc-taglines-life.md`
+  is the header/tagline/Life rework this file's own "The day arc, the
+  tagline purge, and Life's to-do" section describes: the day arc and agent
+  pulse replacing the old status strip, the tagline purge (§3.1 is the
+  deletion list), Life's rolling Today list with priority-to-Command, the
+  one-sheet `GoalSheet` with a role-less goal-draft parser, and the agent
+  doors onto the to-do (`chat_write_task`, Ring 1
+  `task.create`/`task.complete`). Shipped in five phases, each its own
+  commit (§7/§10 carry the phase boundaries and the build protocol); read
+  its §1 audit before touching `App.jsx`'s header or `LifePage.jsx`.
+  `docs/SPEC-v38-learning.md` is the Learning pillar this file's own "Mr.
+  Miyagi and the Learning pillar" section describes: Mr. Miyagi (`tutor`),
+  `core/learning.py`'s isolated schema and mirrored bending streak (Law B1),
+  the `learning.confirm` Ring 1 act, the role-scoped
+  `chat_write_learning_profile` instant-write (Law B2), pillar routing with
+  no `goals.domain` widening (Law B3), and `LearningPage.jsx` + `GrowthMark`.
+  Shipped in four phases, each its own commit (§11 carries the phase
+  boundaries); read its §0.1 first, then §12's test ledger before touching
+  `core/learning.py` or `LearningPage.jsx`. `docs/PHONE.md` is
   phone install + icons. `docs/MANUAL.md` is the operator manual; `GOALS.md` is the goals guide.

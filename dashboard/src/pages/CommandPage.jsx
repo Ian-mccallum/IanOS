@@ -157,6 +157,12 @@ function CommandPage({
     }
   }
 
+  const completeTask = async (item) => {
+    const id = item.interaction?.ref_id ?? item.ref_id
+    await api(`/api/tasks/${id}/done`, 'POST', {}, { queueable: true })
+    refresh()
+  }
+
   const undoAct = async (act) => {
     setUndoingActId(act.id)
     try {
@@ -179,6 +185,8 @@ function CommandPage({
       await confirmGym()
     } else if (interaction.type === 'activity_increment') {
       await bumpActivity(primary)
+    } else if (interaction.type === 'task_complete') {
+      await completeTask(primary)
     } else {
       navigate(primary.route)
     }
