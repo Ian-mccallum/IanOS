@@ -11,6 +11,7 @@ from __future__ import annotations
 import codecs
 import hashlib
 import json
+import unicodedata
 import re
 import secrets
 import sqlite3
@@ -327,6 +328,19 @@ _NOTE_ALLOWED_NODES = frozenset({
     "hardBreak", "horizontalRule",
 })
 _NOTE_ALLOWED_MARKS = frozenset({"bold", "italic", "strike", "code"})
+# The attributes each node may carry; a node not listed may carry none.
+# Tiptap writes every attribute's default into every save, so each key the
+# editor's schema gives a node must be listed here or that node can never be
+# saved: orderedList saves {"start": 1, "type": null} on every numbered list,
+# had no entry, and every numbered list 422'd from the day the button shipped
+# (found 2026-09-10). dashboard/tests/school-note-schema.test.mjs reads this
+# dict and fails when the editor gains an attribute it does not name.
+_NOTE_ALLOWED_ATTRS = {
+    "heading": frozenset({"level"}),
+    "taskItem": frozenset({"checked"}),
+    "codeBlock": frozenset({"language"}),
+    "orderedList": frozenset({"start", "type"}),
+}
 
 
 def _empty_note_document() -> dict:
@@ -379,6 +393,17 @@ def _document_text(value: object, *, depth: int = 0, state: dict | None = None) 
             language = attrs.get("language")
             if set(attrs) - {"language"} or (language is not None and not isinstance(language, str)):
                 raise SchoolNoteValidationError("note code block is invalid")
+        elif node_type == "orderedList":
+            # Values, not just keys, come from wherever the list was pasted
+            # from: parseInt of a junk start="" is NaN, which serializes as
+            # null, and type is the raw HTML attribute. Anything stricter than
+            # "a number or nothing, a short string or nothing" turns a paste
+            # into an unsaveable note.
+            start, kind = attrs.get("start"), attrs.get("type")
+            if (set(attrs) - _NOTE_ALLOWED_ATTRS["orderedList"]
+                    or (start is not None and (isinstance(start, bool) or not isinstance(start, int)))
+                    or (kind is not None and (not isinstance(kind, str) or len(kind) > 16))):
+                raise SchoolNoteValidationError("note numbered list is invalid")
         elif attrs:
             raise SchoolNoteValidationError("note document contains unsupported attributes")
 
@@ -781,13 +806,41 @@ _NOTE_MATCH_PAD = 70
 _NOTE_MATCH_SNIPPETS = 3
 
 
-def _like_escaped(value: str) -> str:
-    r"""Escape LIKE wildcards so a typed % or _ searches for itself.
+# Search folds both sides (Ian, 2026-09-10). Once a Viking Myth note says
+# Æsir, a search for "aesir" must still find it, and a search for Æsir must
+# still find the older notes that say AEsir. Accents drop to their base
+# letter; the Old Norse letters that have no decomposition get their usual
+# English transliteration, the same stand-ins Ian typed before the picker
+# existed (þ->th, ð->d, æ->ae).
+_FOLD_EXTRA = {"þ": "th", "ð": "d", "æ": "ae", "œ": "oe", "ø": "o", "ß": "ss"}
 
-    Without this, typing a single `%` matches every note in the course, which
-    reads as "search is broken" rather than "that is what % means".
+
+def _fold_char(ch: str) -> str:
+    lower = ch.lower()
+    if lower in _FOLD_EXTRA:
+        return _FOLD_EXTRA[lower]
+    decomposed = unicodedata.normalize("NFKD", lower)
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def _fold_with_map(text: str) -> tuple[str, list[int]]:
+    """Folded text, plus the original index each folded character came from.
+
+    The map is what lets a hit found in folded space be shown in the real
+    spelling: search "aesir", see "Æsir" highlighted, not "aesir". Folding can
+    lengthen (þ becomes two characters), so positions cannot be reused as-is.
     """
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    out: list[str] = []
+    origin: list[int] = []
+    for index, ch in enumerate(text):
+        piece = _fold_char(ch)
+        out.append(piece)
+        origin.extend([index] * len(piece))
+    return "".join(out), origin
+
+
+def _fold(text: str) -> str:
+    return _fold_with_map(text or "")[0]
 
 
 def _note_match_snippets(text: str, query: str) -> tuple[int, list[dict]]:
@@ -800,16 +853,20 @@ def _note_match_snippets(text: str, query: str) -> tuple[int, list[dict]]:
     """
     if not text or not query:
         return 0, []
-    haystack = text.lower()
-    needle = query.lower()
-    starts: list[int] = []
+    haystack, origin = _fold_with_map(text)
+    needle = _fold(query)
+    if not needle:
+        return 0, []
+    spans: list[tuple[int, int]] = []
     cursor = haystack.find(needle)
     while cursor != -1:
-        starts.append(cursor)
+        # Back to the original text: the first folded character's source, up
+        # to and including the last one's (a hit ending halfway through a
+        # folded þ still highlights the whole letter).
+        spans.append((origin[cursor], origin[cursor + len(needle) - 1] + 1))
         cursor = haystack.find(needle, cursor + len(needle))
     snippets = []
-    for start in starts[:_NOTE_MATCH_SNIPPETS]:
-        end = start + len(needle)
+    for start, end in spans[:_NOTE_MATCH_SNIPPETS]:
         left = max(0, start - _NOTE_MATCH_PAD)
         right = min(len(text), end + _NOTE_MATCH_PAD)
         snippets.append({
@@ -819,7 +876,7 @@ def _note_match_snippets(text: str, query: str) -> tuple[int, list[dict]]:
             "head": left > 0,
             "tail": right < len(text),
         })
-    return len(starts), snippets
+    return len(spans), snippets
 
 
 def list_note_sessions(conn, course_code: object, *, q: object = "", limit: int = 160) -> list[dict]:
@@ -836,25 +893,38 @@ def list_note_sessions(conn, course_code: object, *, q: object = "", limit: int 
     course = _ensure_school_course(conn, course_code)
     query = _clean_text(q, 160)
     safe_limit = max(1, min(int(limit), 250))
-    where = ["n.course_code=?", "n.deleted_at IS NULL"]
-    params: list[object] = [course["code"]]
-    if query:
-        pattern = f"%{_like_escaped(query)}%"
-        where.append(r"(n.title LIKE ? ESCAPE '\' OR n.plain_text LIKE ? ESCAPE '\')")
-        params.extend([pattern, pattern])
+    if not query:
+        rows = conn.execute(
+            _SCHOOL_NOTE_SELECT
+            + " WHERE n.course_code=? AND n.deleted_at IS NULL"
+              " ORDER BY n.session_date DESC, n.id DESC LIMIT ?",
+            (course["code"], safe_limit),
+        ).fetchall()
+        return [_school_note_row(row, include_document=False) for row in rows]
+    # A search reads every note in the course and matches in Python, because
+    # SQLite's LIKE cannot fold Æ to ae or þ to th. A course notebook is a
+    # term's worth of lecture-sized notes, so this is a few hundred KB at
+    # most. It also means a typed % or _ is just a character, with no LIKE
+    # wildcard to escape.
+    needle = _fold(query)
     rows = conn.execute(
         _SCHOOL_NOTE_SELECT
-        + f" WHERE {' AND '.join(where)} ORDER BY n.session_date DESC, n.id DESC LIMIT ?",
-        (*params, safe_limit),
+        + " WHERE n.course_code=? AND n.deleted_at IS NULL ORDER BY n.session_date DESC, n.id DESC",
+        (course["code"],),
     ).fetchall()
-    results = [_school_note_row(row, include_document=False) for row in rows]
-    if not query:
-        return results
-    for result, row in zip(results, rows):
+    results = []
+    for row in rows:
+        title_match = bool(needle) and needle in _fold(row["title"] or "")
         count, snippets = _note_match_snippets(row["plain_text"] or "", query)
+        if not (title_match or count):
+            continue
+        result = _school_note_row(row, include_document=False)
         result["match_count"] = count
         result["matches"] = snippets
-        result["title_match"] = query.lower() in (result["title"] or "").lower()
+        result["title_match"] = title_match
+        results.append(result)
+        if len(results) >= safe_limit:
+            break
     return results
 
 

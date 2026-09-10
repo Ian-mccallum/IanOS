@@ -23,7 +23,7 @@ import { dirname, resolve } from 'node:path'
 
 import { getSchema } from '@tiptap/core'
 
-import { SCHOOL_EXTENSIONS } from '../src/components/school-notes/schema.js'
+import { CharacterPickerTrigger, SCHOOL_EXTENSIONS } from '../src/components/school-notes/schema.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SCHOOL_PY = resolve(HERE, '../../core/school.py')
@@ -56,6 +56,41 @@ test('every mark the editor can emit is accepted by the server', () => {
     extra, [],
     `editor can produce mark(s) core/school.py rejects with 422: ${extra.join(', ')}`,
   )
+})
+
+/** Read `_NOTE_ALLOWED_ATTRS = {"node": frozenset({...}), ...}` out of core/school.py. */
+function pythonAttrAllowlist() {
+  const source = readFileSync(SCHOOL_PY, 'utf8')
+  const match = source.match(/_NOTE_ALLOWED_ATTRS\s*=\s*\{([\s\S]*?)\n\}/)
+  assert.ok(match, 'could not find _NOTE_ALLOWED_ATTRS in core/school.py')
+  const allowed = new Map()
+  for (const [, node, keys] of match[1].matchAll(/"([^"]+)":\s*frozenset\(\{([^}]*)\}\)/g)) {
+    allowed.set(node, new Set([...keys.matchAll(/"([^"]+)"/g)].map((m) => m[1])))
+  }
+  return allowed
+}
+
+// Node and mark NAMES matching was not enough. Tiptap writes every attribute's
+// default into every save, and orderedList's {start, type} were on no server
+// list, so every numbered list 422'd from the day its button shipped until a
+// real Cmd+Shift+. caught it (2026-09-10).
+test('every attribute the editor gives a node is accepted by the server', () => {
+  const allowed = pythonAttrAllowlist()
+  const extra = []
+  for (const [name, type] of Object.entries(schema.nodes)) {
+    for (const key of Object.keys(type.spec.attrs || {})) {
+      if (!allowed.get(name)?.has(key)) extra.push(`${name}.${key}`)
+    }
+  }
+  assert.deepEqual(
+    extra, [],
+    `editor saves attribute(s) core/school.py rejects with 422: ${extra.join(', ')}`,
+  )
+})
+
+test('a numbered list saves the attributes the server now accepts', () => {
+  const list = schema.nodes.orderedList.createAndFill()
+  assert.deepEqual(Object.keys(list.toJSON().attrs).sort(), ['start', 'type'])
 })
 
 // The two that actually shipped broken. Named individually so a regression
@@ -91,12 +126,29 @@ test('the placeholder and the shortcuts add no node and no mark', () => {
   assert.deepEqual(Object.keys(schema.marks).sort(), Object.keys(bare.marks).sort())
 })
 
-test('Cmd+P is bound to bullets, and nothing rebinds it back to print', () => {
+test('bullets are Cmd+. and Cmd+P is left to the browser', () => {
   const shortcuts = SCHOOL_EXTENSIONS.find((e) => e.name === 'schoolShortcuts')
   assert.ok(shortcuts, 'the shortcut extension is gone')
   // It has to outrank StarterKit: UndoRedo owns Mod-y and Bold owns Mod-b.
   assert.ok(shortcuts.config.priority > 100,
     'schoolShortcuts must outrank StarterKit or its keys never fire')
   const keys = Object.keys(shortcuts.config.addKeyboardShortcuts.call({ editor: null }))
-  assert.deepEqual(keys.sort(), ['Mod-Shift-p', 'Mod-b', 'Mod-p'].sort())
+  assert.deepEqual(keys.sort(), ['Mod-Shift-.', 'Mod-b', 'Mod-.'].sort())
+  assert.ok(!keys.includes('Mod-p'), 'Cmd+P opened Print in real use; never bind it again')
+})
+
+// Ian, 2026-09-10: the Old Norse picker's key. It is added per editor, not in
+// SCHOOL_EXTENSIONS, and it must widen nothing the editor can produce.
+test('the character-picker shortcut adds no node and no mark', () => {
+  const withTrigger = getSchema([...SCHOOL_EXTENSIONS, CharacterPickerTrigger])
+  assert.deepEqual(Object.keys(withTrigger.nodes).sort(), Object.keys(schema.nodes).sort())
+  assert.deepEqual(Object.keys(withTrigger.marks).sort(), Object.keys(schema.marks).sort())
+})
+
+test('Cmd+; falls through untouched unless the note has a character set', () => {
+  const bind = (onTrigger) => CharacterPickerTrigger.config.addKeyboardShortcuts.call({ options: { onTrigger } })
+  assert.deepEqual(Object.keys(bind(() => false)), ['Mod-;'])
+  assert.equal(bind(() => false)['Mod-;'](), false, 'a course with no set must not swallow the key')
+  assert.equal(bind(() => true)['Mod-;'](), true)
+  assert.equal(CharacterPickerTrigger.config.addOptions().onTrigger(), false)
 })

@@ -9,6 +9,64 @@ shipped without a changelog entry — `git log` and the `docs/SPEC-vN-*.md`
 files are the record for that history; CLAUDE.md's "Conventions & gotchas"
 section links each one to what it shipped.
 
+## 2026-09-10 — Old Norse letters in Viking Myth notes
+
+Ian's first four SPAN 210 notes had zero non-ASCII characters in about
+10,000, and the nearest-looking ASCII typed in their place (a p or a b for þ,
+an o for ð, AE for Æ). The letters were out of reach, so he guessed.
+
+### Added
+- **Cmd+; opens the course's letters at the caret, only in Viking Myth.**
+  A popover of normalized Old Norse (`á é í ó ú ý þ ð æ ö ǫ ø œ` and
+  capitals), also reachable from a Þ button in that notebook's toolbar.
+  Keyboard first, since he takes these notes on a laptop: arrows move,
+  up/down switch case, typing the plain letter jumps to it (t is þ, d is ð,
+  pressing a letter again cycles its variants), Enter inserts and closes.
+  In every other notebook the key is not bound at all. No autocorrect, by
+  Ian's choice.
+- **Search folds accents and the Old Norse letters, both ways.** Once notes
+  say Æsir, "aesir" still finds them, Æsir still finds the older ASCII
+  notes, and every hit is shown in the spelling as written. This moved
+  notebook search off SQL `LIKE`, which cannot fold, onto a Python match
+  with a per-character origin map (folding can lengthen a string: þ is two
+  characters folded).
+
+### Changed
+- **His existing notes, converted to normalized spellings.** 49
+  replacements across 43 words, drawn only from words actually in his
+  notes, applied through the ordinary compare-and-swap save
+  after a JSON backup and an off-site snapshot. There is no note revision
+  history, so the JSON file is the undo. Today's note was written during
+  the lecture and was only converted once he had stopped editing it:
+  rewriting a note under a live editor makes its next autosave conflict,
+  and "Reload" discards whatever was typed since the last save.
+- **Bullets moved from Cmd+P to Cmd+.** (numbered: Cmd+Shift+.). Cmd+P
+  opened the browser's Print dialog in real use. The 2026-09-09 check that
+  said it could not dispatched a synthetic keydown, which proves a handler
+  ran and nothing about what the browser does with the real key. The
+  toolbar's tooltips now show each shortcut.
+
+### Fixed during live verification
+- The popover opened at y=4465 when the caret had been scrolled out of
+  view: invisible, but holding focus. It now scrolls the caret into view
+  first and falls back to a centred position.
+- A letter typed while sitting on a different one continued from the
+  current position (o on þ went to ö). A fresh letter now lands on its
+  first variant.
+- **Numbered lists could never be saved, in any course, since School notes
+  shipped (2026-08-25).** Tiptap writes `orderedList` as
+  `{"start": 1, "type": null}` even untouched, and the server allowed no
+  attributes on it, so the first autosave after making one 422'd (caught by
+  a real Cmd+Shift+. here). None of Ian's notes held one, and his two logged
+  422s on the Sep 8 note were isolated with saves succeeding right after.
+  `core/school.py` now keeps a `_NOTE_ALLOWED_ATTRS` dict and accepts any
+  start (a number or null, what a paste can bring) and a short type; the
+  parity test reads that dict and fails on any editor attribute it doesn't
+  name, the check the name-only diff never made.
+- Every shortcut was re-checked with trusted keypresses, not synthetic
+  events: Cmd+B with nothing selected bolds the whole line and leaves the
+  caret put; Cmd+. cycles nested bullet, plain, bullet; Cmd+Shift+. numbers.
+
 ## 2026-09-10 — A test that only passed because of yesterday's date
 
 Routine health check the morning after: both repos clean and pushed, the

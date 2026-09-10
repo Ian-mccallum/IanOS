@@ -1321,3 +1321,66 @@ def test_every_match_carries_its_own_context(conn, monkeypatch):
     assert row["matches"][0]["after"] != row["matches"][1]["after"]
     # The tail flag is what lets the UI show an ellipsis without guessing.
     assert row["matches"][0]["tail"] is True
+
+
+def test_search_folds_old_norse_both_ways(conn, monkeypatch):
+    """Ian, 2026-09-10: Viking Myth notes now carry real Old Norse letters.
+
+    A search typed in ASCII must still find them, a search typed with the
+    real letters must still find the older ASCII notes, and every hit is
+    shown as it was written, not as it was typed.
+    """
+    _freeze_school_today(monkeypatch)
+    school.seed_inventory(conn, _schedule_inventory())
+    session = _note_with_text(conn, "The Æsir and þórs hammer. Later the AEsir again. Völsung clan.")
+    code = session["course_code"]
+
+    [hit] = school.list_note_sessions(conn, code, q="aesir")
+    assert hit["match_count"] == 2
+    assert [m["match"] for m in hit["matches"]] == ["Æsir", "AEsir"]
+
+    assert school.list_note_sessions(conn, code, q="Æsir")[0]["match_count"] == 2
+    assert school.list_note_sessions(conn, code, q="thor")[0]["matches"][0]["match"] == "þór"
+    assert school.list_note_sessions(conn, code, q="volsung")[0]["match_count"] == 1
+    assert school.list_note_sessions(conn, code, q="Völsung")[0]["match_count"] == 1
+    assert school.list_note_sessions(conn, code, q="odin") == []
+
+
+def test_folding_maps_a_hit_back_to_the_letters_it_came_from():
+    """þ folds to two characters; a hit must still highlight exactly þ."""
+    count, [snippet] = school._note_match_snippets("a þurs b", "th")
+    assert count == 1
+    assert snippet["match"] == "þ"
+    assert (snippet["before"], snippet["after"]) == ("a ", "urs b")
+
+
+def test_a_numbered_list_saves_with_the_attributes_tiptap_writes(conn, monkeypatch):
+    """Every numbered list 422'd until 2026-09-10.
+
+    Tiptap saves orderedList as {"start": 1, "type": null} even when nothing
+    was customized, and the server allowed no attributes on it. A paste can
+    also bring any start (or null, from parseInt of junk) and a raw HTML type.
+    """
+    _freeze_school_today(monkeypatch)
+    school.seed_inventory(conn, _schedule_inventory())
+    session = _note_with_text(conn, "x")
+
+    def numbered(attrs):
+        item = {"type": "listItem", "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": "first"}]}]}
+        return {"type": "doc", "content": [
+            {"type": "orderedList", "attrs": attrs, "content": [item]}]}
+
+    def revision():
+        return conn.execute(
+            "SELECT revision FROM school_note_sessions WHERE id = ?", (session["id"],),
+        ).fetchone()[0]
+
+    for attrs in ({"start": 1, "type": None}, {"start": None, "type": "a"}, {"start": -3}, {}):
+        school.update_note_session(
+            conn, session["id"], document=numbered(attrs), expected_revision=revision())
+    for attrs in ({"start": "1"}, {"start": True}, {"type": 7},
+                  {"start": 1, "reversed": True}, {"type": "x" * 17}):
+        with pytest.raises(school.SchoolNoteValidationError):
+            school.update_note_session(
+                conn, session["id"], document=numbered(attrs), expected_revision=revision())

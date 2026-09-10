@@ -549,9 +549,8 @@ What you get:
 - **Writing full screen.** The note takes the window: no nav, no rails, a
   wider measure and larger type. One floating bar has Notes, Details, Files,
   Finish and Exit; Escape also exits. **Cmd+B** bolds the selection, or the
-  whole line when nothing is selected. **Cmd+P** starts a bullet list
-  (Cmd+Shift+P numbered). Cmd+P does not open the print dialog while you are
-  in a note.
+  whole line when nothing is selected. **Cmd+.** (a dot) starts a bullet list
+  (Cmd+Shift+. numbered). Hover a toolbar button to see its shortcut.
 - **A deadline Canvas never sent** goes in `known_major_dates` in
   `data/fall_2026_school_seed.json`, then `make sync-syllabus`. Give it an
   explicit `id`. Do not insert the row into the database by hand: the next

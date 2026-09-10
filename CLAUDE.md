@@ -1150,6 +1150,10 @@ the academic term can be reshaped without touching money, leads, or journal.
   lives in `dashboard/src/components/school-notes/schema.js` and
   `dashboard/tests/school-note-schema.test.mjs` diffs it against the Python
   allowlist. Do not add a Tiptap extension without extending both.
+  **Attributes are part of the contract too** (`_NOTE_ALLOWED_ATTRS`): Tiptap
+  saves every attribute's default, and `orderedList`'s `{start, type}` were
+  on no list, so every numbered list 422'd from 2026-08-25 to 2026-09-10.
+  Accept every value the editor can hold, pastes included, not only defaults.
 - **Study aids are opt-in, consent-gated, and revision-bound.**
   `school_ai_settings` is one local consent row; `create_school_study_artifact`
   refuses without it, `claim_school_study_artifact` re-checks it inside the
@@ -1177,8 +1181,40 @@ the academic term can be reshaped without touching money, leads, or journal.
   later in a lecture never matched and the search read as broken. The rows now
   carry `match_count` / `matches` (`_note_match_snippets`: the sentence around
   each hit, the matched text as WRITTEN not as typed, plus head/tail flags so
-  the UI renders an ellipsis without doing offset math), and `_like_escaped`
-  means a typed `%` searches for itself instead of returning every note.
+  the UI renders an ellipsis without doing offset math), and, since 2026-09-10, it **folds accents and the Old Norse letters on
+  both sides** (`_fold_with_map`: NFKD plus þ→th, ð→d, æ→ae, œ→oe, ø→o),
+  matching in Python instead of SQL `LIKE`, which cannot fold. So "aesir"
+  finds `Æsir`, `Æsir` still finds older notes that say `AEsir`, and the
+  snippet shows the spelling as written: folding can lengthen a string (þ
+  is two characters folded), so a per-character origin map carries each
+  hit back to the original letters. A course notebook is a term of
+  lecture-sized notes, so reading all of it per search is cheap. A typed
+  `%` is just a character now; `_like_escaped` is gone with the `LIKE`.
+- **Old Norse letters in Viking Myth notes (Ian, 2026-09-10).** His first
+  four SPAN 210 notes had zero non-ASCII characters and a lot of
+  nearest-looking ASCII stand-ins in their place (a p or a b typed for þ,
+  an o for ð, AE for Æ). **Cmd+;** (Ctrl+;
+  elsewhere) or the toolbar's **Þ** opens a `Sheet` popover at the caret
+  with normalized Old Norse (`á é í ó ú ý þ ð æ ö ǫ ø œ` and capitals).
+  Keyboard first: arrows move, up/down switch case, typing the plain
+  letter jumps to it (t is þ, d is ð; a fresh letter lands on its first
+  variant, the same letter again cycles), Enter inserts at the caret and
+  closes. Which courses get a set lives in one map,
+  `school-notes/characters.js::COURSE_CHARACTER_SETS`, with one entry.
+  The shortcut is `CharacterPickerTrigger` in `schema.js`, **deliberately
+  not in `SCHOOL_EXTENSIONS`**: `SchoolNoteEditor` adds it with an
+  `onTrigger` read through a ref (the editor outlives a notebook switch),
+  which returns false in every other course so the key falls through
+  untouched. It declares no node and no mark, and the parity test asserts
+  that. The popover opens only once the caret is on screen (live testing
+  put it at y=4465, invisible but holding focus), and it gets its own width
+  (the shared popover caps at 360px, and 13 keys need about 620px). The
+  public mirror rewrites `SPAN 210` to `SPAN 210`, so the sample Spanish
+  course carries this set there. No autocorrect, by Ian's choice. His
+  existing notes were converted once to normalized spellings, through
+  `update_note_session` (compare-and-swap), after a JSON backup at
+  `data/school/notes-backup-before-letter-fix-2026-09-10.json` and an off-site
+  snapshot. There is no note revision history, so that file is the undo.
 - **The writing surface** (SPEC-v36 plus Ian, 2026-09-09). Full screen hides
   the nav AND `.school-notebook-head` (its actions were pinned top-right,
   where the new fixed `.school-fs-bar` lives, and the two stacked); the bar
@@ -1187,11 +1223,14 @@ the academic term can be reshaped without touching money, leads, or journal.
   is 80ch normally and 100ch in full screen, not a full bleed: past ~100
   characters the eye stops finding the start of the next line. **Cmd+B with
   nothing selected bolds the whole line** (the editor default only flips the
-  stored mark at the caret, which looked like nothing happened) and **Cmd+P
-  toggles a bullet list** (Cmd+Shift+P numbered). `SchoolShortcuts` needs its
+  stored mark at the caret, which looked like nothing happened) and **Cmd+.
+  toggles a bullet list** (Cmd+Shift+. numbered; moved off Cmd+P on
+  2026-09-10, when it opened Print in real use). `SchoolShortcuts` needs its
   `priority: 1000` to outrank StarterKit, which binds Mod-b itself and Mod-y
-  to redo; returning true from the handler preventDefaults Cmd+P, so the
-  browser print dialog never opens in a note. The placeholder is Tiptap's
+  to redo; a synthetic keydown in a test proves a handler ran, never
+  what the browser does with the real key, which is how "Cmd+P can't
+  print" got believed. Pick keys whose browser default is harmless if it
+  leaks. The placeholder is Tiptap's
   `Placeholder` decoration now, not an absolutely positioned `<p>` over the
   prose that only vanished when React happened to re-render and otherwise sat
   underneath what was being typed. **Placeholder and SchoolShortcuts are safe

@@ -764,6 +764,7 @@ export default function SchoolNotebookPage({ state, toast, onBack }) {
                 document={noteDocument}
                 onChange={changeDocument}
                 autoFocus={freshSession}
+                courseCode={open.course_code}
               />
             </>
           ) : (

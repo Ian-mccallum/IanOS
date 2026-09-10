@@ -59,11 +59,13 @@ function boldLineOrSelection(editor) {
 /**
  * Keys that have to beat StarterKit's own bindings, hence the priority.
  *
- * Mod-p is the browser's Print. Returning true from a ProseMirror keymap
- * handler calls preventDefault, so the print dialog does not open while the
- * caret is in a note. Every plain Cmd+letter is claimed by the browser or the
- * OS; this app already takes Cmd+K for the palette, and printing a lecture
- * note is not something that happens here.
+ * Bullets are Cmd+. (a dot is a bullet), numbered is Cmd+Shift+. . Not Cmd+P:
+ * that shipped first and Ian got the browser's Print dialog in real use
+ * (2026-09-10). The test that "proved" print was suppressed dispatched a
+ * synthetic keydown, which shows a handler ran and says nothing about what
+ * the browser does with the real key. So choose keys whose browser default
+ * is harmless if it ever leaks past the editor: Cmd+. is at most Stop
+ * loading, a no-op on a page that has already loaded.
  */
 const SchoolShortcuts = Extension.create({
   name: 'schoolShortcuts',
@@ -71,9 +73,31 @@ const SchoolShortcuts = Extension.create({
   addKeyboardShortcuts() {
     return {
       'Mod-b': () => boldLineOrSelection(this.editor),
-      'Mod-p': () => this.editor.chain().focus().toggleBulletList().run(),
-      'Mod-Shift-p': () => this.editor.chain().focus().toggleOrderedList().run(),
+      'Mod-.': () => this.editor.chain().focus().toggleBulletList().run(),
+      'Mod-Shift-.': () => this.editor.chain().focus().toggleOrderedList().run(),
     }
+  },
+})
+
+/**
+ * Cmd+; (Ctrl+; elsewhere) opens the course's special-character picker.
+ *
+ * Deliberately NOT in SCHOOL_EXTENSIONS: it only means something in a course
+ * that has a character set, so SchoolNoteEditor adds it itself with an
+ * `onTrigger` that returns false everywhere else. A handler that returns false
+ * lets the key fall through untouched, which is what keeps the combo free in
+ * every other notebook. Like Placeholder and SchoolShortcuts, it declares no
+ * node and no mark, so it can never put anything in a document the server
+ * would reject.
+ */
+export const CharacterPickerTrigger = Extension.create({
+  name: 'characterPickerTrigger',
+  priority: 1000,
+  addOptions() {
+    return { onTrigger: () => false }
+  },
+  addKeyboardShortcuts() {
+    return { 'Mod-;': () => Boolean(this.options.onTrigger?.()) }
   },
 })
 
