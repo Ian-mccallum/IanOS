@@ -9,6 +9,32 @@ shipped without a changelog entry — `git log` and the `docs/SPEC-vN-*.md`
 files are the record for that history; CLAUDE.md's "Conventions & gotchas"
 section links each one to what it shipped.
 
+## 2026-09-10 — A test that only passed because of yesterday's date
+
+Routine health check the morning after: both repos clean and pushed, the
+server serving current HEAD, last night's backup and nightly run both
+clean (`8 of 11 woke; 0 off; 0 out of season`, tutor correctly reported
+"Ai" as mid-onboarding rather than featuring it), no new `system` failure
+memos. One thing wasn't clean: `dashboard/tests/poop-log.ui.test.jsx`'s
+offline-tap test started failing, deterministically, with no code change
+on either side of it since it was written.
+
+### Fixed
+- **The exact trap CLAUDE.md already names, a second time.** The test's
+  `const DAY = '2026-09-09'` was a bare literal; `PoopLog.jsx`'s offline
+  fallback stamps its optimistic entry with the real wall clock
+  (`nowLocalStamp()`, no injected `now`) and silently drops it when that
+  day doesn't match the fixture's `day`. The test passed only as long as
+  the machine's actual calendar date still happened to be 2026-09-09 — it
+  broke itself the moment the date rolled over, proving nothing the whole
+  time it was green. Fixed with `vi.useFakeTimers({ toFake: ['Date'] })`
+  scoped to just `Date` (not the broader form, which would have also
+  frozen `setTimeout` and stalled the component's own 6s "fresh" row
+  highlight) plus `vi.setSystemTime` pinned to `DAY`. Checked the rest of
+  the dashboard suite for the same shape of literal: one other file has it
+  (`today-panel.ui.test.jsx`'s `TODAY`), and it's safe — that component
+  never reads the real clock, `today` only ever arrives as a prop.
+
 ## 2026-09-09 — Four fixes: chat full screen, source of truth, Life, Learning
 
 Five requests in one message. Four became independent parallel builds (two

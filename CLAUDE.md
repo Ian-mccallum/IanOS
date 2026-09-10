@@ -1379,7 +1379,17 @@ The full law, the substitution map and the publish procedure live in
 - **A guardrail test that passes against the real clock proves nothing.**
   `term_active` was `today >= START` with no end date, so it could never go
   false and its test could never fail. Freeze the clock and pin both edges of
-  any window.
+  any window. This one shipped twice: `dashboard/tests/poop-log.ui.test.jsx`'s
+  offline-tap test used a bare `const DAY = '2026-09-09'` against
+  `PoopLog.jsx`'s real `nowLocalStamp()` (no injected `now`), so the test
+  passed only while the machine's actual calendar date still matched the
+  literal — silently failing on 2026-09-10 with no code change on either
+  side. Fixed with `vi.useFakeTimers({ toFake: ['Date'] })` +
+  `vi.setSystemTime(...)` pinned to `DAY`, not the broader `useFakeTimers()`
+  (which would have also frozen `setTimeout` and stalled the component's own
+  6s highlight timer). `dashboard/tests/today-panel.ui.test.jsx` has the same
+  shape of literal (`TODAY = '2026-09-04'`) but is safe: `TodayPanel.jsx`
+  never reads the real clock, `today` only ever arrives as a prop.
 - Domains are inconsistent by design across layers: the `goals` table CHECK allows
   `business|health|personal|finance` (+`school` added later), while **facts** use
   `business|finance|health|personal|college|legal`. `college` vs `school` both

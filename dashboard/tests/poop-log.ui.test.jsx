@@ -59,6 +59,21 @@ async function renderPanel(props = {}) {
   }
 }
 
+// applyResult's offline fallback stamps its optimistic entry with the REAL
+// wall clock (nowLocalStamp(), no injected `now`) and drops it if that day
+// doesn't match the fixture's `day`. DAY was a bare literal with nothing
+// pinning it to "today", so this suite passed only as long as the machine's
+// calendar date happened to still be 2026-09-09 -- the exact "guardrail test
+// that passes against the real clock proves nothing" trap CLAUDE.md warns
+// about. Freezing the clock inside DAY, for the whole file, is what makes
+// every day after this one still exercise the real code path instead of
+// silently skipping the offline-count assertion.
+// toFake: ['Date'] only -- the component's own setTimeout (the 6s "fresh"
+// row highlight) must keep running on the real clock; only `new Date()` /
+// Date.now() need to be pinned here.
+vi.useFakeTimers({ toFake: ['Date'] })
+vi.setSystemTime(new Date(`${DAY}T12:00:00`))
+
 afterEach(() => {
   reducedMotion.value = false
   vi.mocked(api).mockReset()
