@@ -133,3 +133,85 @@ it('the composer keeps focus after a save so the next line costs nothing', async
   expect(field.value).toBe('')
   await view.unmount()
 })
+
+it('a finished task can be sent back to Today', async () => {
+  // The one write in this product with no way back: the ring in the Done
+  // disclosure was an inert <span>, so a mis-tap on a 52px row was final,
+  // even though the endpoint has taken {undo: true} since SPEC-v41 shipped.
+  const view = await renderPanel({
+    tasksToday: [],
+    tasksDoneToday: [task({ id: 7, title: 'Mail the form' })],
+  })
+  const ring = view.host.querySelector('.today-done-reveal .trow-check')
+  expect(ring.tagName).toBe('BUTTON')
+  expect(ring.getAttribute('aria-label')).toBe('Move "Mail the form" back to Today')
+
+  await act(async () => ring.click())
+  expect(api).toHaveBeenCalledWith('/api/tasks/7/done', 'POST', { undo: true }, { queueable: true })
+  await view.unmount()
+})
+
+it('the done list opens itself once nothing is left open', async () => {
+  // Finishing the list left the panel looking empty while the day's actual
+  // work sat collapsed behind a disclosure.
+  const done = [task({ id: 7, title: 'Mail the form' })]
+
+  const cleared = await renderPanel({ tasksToday: [], tasksDoneToday: done })
+  expect(cleared.host.querySelector('.today-done-reveal').open).toBe(true)
+  await cleared.unmount()
+
+  const working = await renderPanel({ tasksDoneToday: done })
+  expect(working.host.querySelector('.today-done-reveal').open).toBe(false)
+  await working.unmount()
+})
+
+it('a rejected completion does not leave the row claiming it is done', async () => {
+  // `completing` is local state, so it outlives the 15s poll: a failed write
+  // used to leave the row struck through, greyed and ring-filled forever,
+  // with no toast to say the write never landed.
+  const toast = vi.fn()
+  vi.mocked(api).mockRejectedValue(new Error('offline. Your Mac is not reachable'))
+  const view = await renderPanel({ toast })
+
+  await act(async () => view.host.querySelector('.trow-check').click())
+  expect(view.host.querySelector('.trow').className).toContain('completing')
+
+  await act(async () => { await new Promise((r) => setTimeout(r, 400)) })
+  expect(view.host.querySelector('.trow').className).not.toContain('completing')
+  expect(toast).toHaveBeenCalledWith('offline. Your Mac is not reachable', 'crit')
+  await view.unmount()
+})
+
+it('clearing the last open task says so in the composer', async () => {
+  // SPEC-v41 §4.6's fourth delight item, specified and never built.
+  const view = await renderPanel()
+  expect(view.host.querySelector('.trow-input').placeholder).toBe('New task')
+
+  await act(async () => view.host.querySelector('.trow-check').click())
+  await act(async () => { await new Promise((r) => setTimeout(r, 400)) })
+  expect(view.host.querySelector('.trow-input').placeholder).toBe('Done for today')
+  await view.unmount()
+})
+
+it('a committed rename paints before the write comes back', async () => {
+  // The row rendered task.title, which does not change until /api/state has
+  // been refetched, so pressing Enter flashed the OLD text back at Ian.
+  let settle
+  vi.mocked(api).mockReturnValue(new Promise((r) => { settle = r }))
+  const view = await renderPanel()
+
+  await act(async () => view.host.querySelector('.trow-title').click())
+  const field = view.host.querySelector('.trow-edit')
+  const setValue = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+  await act(async () => {
+    setValue.call(field, 'Renew permit at city hall')
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => {
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  })
+
+  expect(view.host.querySelector('.trow-title').textContent).toBe('Renew permit at city hall')
+  await act(async () => { settle({}) })
+  await view.unmount()
+})

@@ -7,9 +7,11 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from api import main  # noqa: E402
 from core import db, learning  # noqa: E402
 
 
@@ -278,3 +280,51 @@ def test_skip_stale_sessions_marks_only_old_open_rows(conn):
     assert learning.get_session(conn, "2026-09-01")["status"] == "skipped"
     assert learning.get_session(conn, "2026-08-31")["status"] == "completed"
     assert learning.get_session(conn, "2026-09-03")["status"] == "open"
+
+
+# ------------------------------------------------------ dashboard surface
+# A topic stuck in 'clarifying' (an onboarding thread that never called
+# chat_write_learning_profile) used to be invisible: active_topics()'s
+# hard status='active' filter meant api/main.py::_learning_state never
+# looked for it anywhere. This is the exact scenario the real
+# data/ianos.db surfaced (topic "Ai", id=1, created 2026-09-09) -- verified
+# read-only against that file before this fix, never touched here.
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.connect().close()
+    return TestClient(main.app)
+
+
+def test_clarifying_topic_is_visible_but_never_counted_active(client):
+    # Arrange: one clarifying topic (an abandoned onboarding thread, the
+    # real-world "Ai" scenario) and one genuinely active topic.
+    # Act: hit /api/state, which composes _learning_state.
+    # Assert: the clarifying topic appears under 'clarifying' and ONLY
+    # there -- never under 'topics', which stays the active-only list.
+    conn = db.connect()
+    _topic(conn, "Ai", "clarifying")
+    active_id = _topic(conn, "python", "active")
+    conn.close()
+
+    learning_state = client.get("/api/state").json()["learning"]
+
+    assert [t["name"] for t in learning_state["topics"]] == ["python"]
+    assert learning_state["topics"][0]["id"] == active_id
+    assert [t["name"] for t in learning_state["clarifying"]] == ["Ai"]
+    # A clarifying entry carries no confirmed_count -- it never earned a
+    # session, so the dashboard has nothing to feed a GrowthMark with.
+    assert "confirmed_count" not in learning_state["clarifying"][0]
+
+
+def test_no_clarifying_topics_yields_empty_list_not_missing_key(client):
+    # Arrange: an active topic only, no clarifying ones.
+    # Act: hit /api/state.
+    # Assert: 'clarifying' is present and empty, never absent -- the
+    # dashboard can render on the key's presence alone.
+    conn = db.connect()
+    _topic(conn, "python", "active")
+    conn.close()
+    learning_state = client.get("/api/state").json()["learning"]
+    assert learning_state["clarifying"] == []

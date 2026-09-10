@@ -119,6 +119,26 @@ def test_wealth_never_offers_a_trade_and_counsel_defers_to_a_lawyer():
     assert "not a lawyer" in counsel
 
 
+def test_law_layer_makes_ian_the_source_of_truth_on_his_own_life():
+    """Ian's stated plans/facts about himself must never be refused.
+
+    The agent may flag one concern but must still make the write, never
+    ask "are you sure?", and never swap in a plan of its own. Lives in
+    CHAT_LAW_LAYER (not the voice layer) so it outranks persona prose and
+    cannot be softened by a role file.
+    """
+    law = runner.CHAT_LAW_LAYER.lower()
+    assert "source of truth on his own life" in law
+    assert "never refuse the write" in law
+    assert 'never ask\n"are you sure?" first' in law or "are you sure?" in law
+    assert "never substitute a plan of your own" in law
+    # The missing-required-detail follow-up sits right beside it.
+    assert "ask that one direct question in the same turn" in law
+    assert "optional field" in law and "never blocks the write" in law
+    for name in SEQUENCE:
+        assert "source of truth on his own life" in runner.chat_system_prompt(name).lower(), name
+
+
 # ----------------------------------------------------------- behavioural
 
 BEHAVIOURAL = pytest.mark.skipif(

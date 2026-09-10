@@ -9,6 +9,79 @@ shipped without a changelog entry — `git log` and the `docs/SPEC-vN-*.md`
 files are the record for that history; CLAUDE.md's "Conventions & gotchas"
 section links each one to what it shipped.
 
+## 2026-09-09 — Four fixes: chat full screen, source of truth, Life, Learning
+
+Five requests in one message. Four became independent parallel builds (two
+Opus, two Sonnet, run via the Workflow tool); the fifth (notebook search)
+had already shipped earlier the same day. Every workstream's own tests
+passed before merge; the orchestrator then ran the full suite together,
+found and fixed one cross-workstream visual bug live in a browser, and
+verified the other three against a scratch copy of the real database.
+
+### Chat: full screen, properly
+
+Desktop "open" mode was a 420px right-anchored drawer over an otherwise
+unmodified page ("modal on the side," Ian's words). It is now a full-screen
+two-pane takeover: nav, mobile bar, the page's own header, and the offline
+bar all hide. Opened from Command, a hero column (Order card, same DOM,
+same handlers) fills a `clamp(320px, 26vw, 440px)` left column and chat
+fills the rest, hairline seam, zero gap, zero overlap (measured live).
+Opened from anywhere else, there is no fake hero — chat goes true
+edge-to-edge. Mobile is unchanged.
+
+**Found during verification, not by the build agent** (it had no browser):
+in the no-hero case, the underlying page was never hidden, only covered by
+the panel's deliberately translucent background — at full viewport width
+that let the whole page bleed through as illegible overlapping text.
+Fixed: `.page-content` goes `visibility: hidden` in that case.
+
+### Chat: Ian is the source of truth on his own life
+
+He said it plainly: agents can suggest, they cannot refuse a plan he's
+already decided on. `CHAT_LAW_LAYER` (outranks the persona) now says so
+explicitly, and a paired rule covers the one real gap left after last
+session's `goal_id` fix: when a write is missing exactly one thing it
+genuinely needs, ask one direct question instead of guessing or refusing.
+Verified with two real live model calls against a `VACUUM INTO` snapshot:
+a complete request wrote immediately with one named concern and no
+hedging; an incomplete one asked a single follow-up and wrote nothing.
+Also fixed a real internal contradiction the file already had: "do not
+call writer tools" sat a few paragraphs above "make the write,"
+unqualified — it now says which writer tools (the nightly-only ones).
+
+### Life: the rebuild had a broken container
+
+"The life ui page sucks. the to do is terrible" — after SPEC-v41's own
+rebuild. Root cause: two CSS defects shipped in the spec itself
+(`.today-panel` had zero padding on any side; a -6px optical alignment
+trick was silently clipped by the swipe wrapper, costing 6px off a 34×44
+target), invisible to a code review of the component alone. Three defects
+were functional, not aesthetic: completing a task was **unrecoverable**
+(`task._done` never existed anywhere in the codebase, so Undo was always a
+no-op and the done row was an inert span); a rejected write left a row
+permanently lying (no try/catch anywhere but `add`); a committed rename
+visibly flashed back to the old text for the length of the round trip. All
+three fixed. Also: the mobile composer's dead `position: sticky` (removed),
+the separator that could structurally never match its intended anchor
+(fixed), the spec'd "Done for today" delight that was never built (built),
+and `.life-page`'s missing mobile gap that fused two panels into one
+doubled hairline (fixed). Known and deliberately unfixed: the Life goal
+panel's milestone checkbox is Partner's pink brand colour, a second checkbox
+language on the same screen — flagged, not touched (spans other pillars).
+
+### Learning: a topic that vanishes with no trace
+
+`core/learning.py::clarifying_topics()` already existed; the dashboard
+projection never called it. A topic mid-onboarding was absent from
+`/api/state` entirely — no card, no trace, nothing. Ian's own real database
+had exactly this: a topic named "Ai," created today, stuck in `clarifying`
+since a one-minute-old tutor thread that never ran a turn. Fixed:
+`_learning_state` now returns `clarifying_topics()` under its own key,
+and the page renders an "Unfinished setup" card with a Continue action
+that reopens the same thread. Verified against a read-only copy of the
+real database: the fix surfaces exactly the stuck "Ai" topic and resumes
+the real onboarding conversation.
+
 ## 2026-09-09 — The nightly backup had been dead for 29 days
 
 Found while verifying that everything was up to date. `make backup-status`

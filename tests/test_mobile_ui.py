@@ -842,3 +842,37 @@ def test_no_taglines():
             if m and m.group(1).endswith(_TAGLINE_ARRAY_SUFFIXES):
                 offenders.append(f"{p.relative_to(root.parent.parent)}:{lineno}: {line.strip()}")
     assert not offenders, f"tagline constructions found: {offenders}"
+
+
+def test_life_reads_as_one_page_not_two_loose_panels():
+    """Two defects SPEC-v41 §4.5.2 wrote into the spec itself and both build
+    passes then inherited.
+
+    `.today-panel` is a `<section className="panel">`, and `.panel` is a bare
+    glass shell: all of its padding lives on `.panel-head` / `.panel-body`,
+    neither of which this surface uses. With no inset of its own the heading
+    sat on the panel's border, `.trow-check`'s optical pull put part of its
+    34px target outside the panel where `.panel { overflow: hidden }` clipped
+    it, and the composer had no floor under it.
+
+    `.life-page` only ever declared the desktop grid, so at phone widths the
+    two panels' 1px borders sat flush against each other and read as one
+    broken box rather than two sections of one page.
+    """
+    base = "".join(b for c, b in _blocks(CSS) if not (c or "").startswith("@"))
+
+    panel = re.search(r"\.today-panel\s*\{([^}]*)\}", base)
+    assert panel and "padding" in panel.group(1), (
+        ".today-panel is a bare .panel and declares no padding of its own"
+    )
+    page = re.search(r"\.life-page\s*\{([^}]*)\}", base)
+    assert page and "gap" in page.group(1), (
+        ".life-page declares no gap outside the desktop grid, so its two "
+        "panels sit border-to-border on the phone"
+    )
+    # The composer IS a .trow rather than containing one, so neither of the
+    # sibling selectors above it can ever match: the last task and the plus
+    # row ran together with no hairline between them.
+    assert ".today-rows > * + .trow-new::before" in CSS, (
+        "the composer row has no separator selector that can reach it"
+    )

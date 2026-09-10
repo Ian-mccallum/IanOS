@@ -24,12 +24,31 @@ function TopicCard({ topic, onOpen }) {
   )
 }
 
+// A topic still mid-onboarding: Ian named it but the clarifying conversation
+// never finished, so it never earned a profile, a session, or a growth
+// stage. No GrowthMark here -- a plain "unfinished setup" chip is more
+// honest than a fake stage-1 stage. Continue reopens the tutor's current
+// thread (empty seedText only switches view, never injects or overwrites
+// a message -- SPEC-v40 "one role, one current thread").
+function ClarifyingTopicCard({ topic, onContinue }) {
+  return (
+    <button
+      className="learning-topic-card learning-topic-card--clarifying glass-card glass-card-pad"
+      onClick={onContinue}
+    >
+      <span className="learning-unfinished-chip">Unfinished setup</span>
+      <span className="learning-topic-name">Setting up: {topic.name}</span>
+    </button>
+  )
+}
+
 export default function LearningPage({ state, refresh, toast, requestConsult }) {
   const [name, setName] = useState('')
   const [pendingOrigin, setPendingOrigin] = useState('user')
   const [busy, setBusy] = useState(false)
   const reduced = useReducedMotion()
-  const learningState = state.learning || { topics: [], today: null, streak: { streak: 0, stools: 2 } }
+  const learningState = state.learning || { topics: [], clarifying: [], today: null, streak: { streak: 0, stools: 2 } }
+  const clarifyingTopics = learningState.clarifying || []
   const suggested = (state.pending_proposals || []).filter(
     (p) => p.role === 'tutor' && p.status === 'PENDING' && p.kind === 'task'
   )
@@ -92,6 +111,18 @@ export default function LearningPage({ state, refresh, toast, requestConsult }) 
               key={t.id}
               topic={t}
               onOpen={() => requestConsult?.({ role: 'tutor', seedText: '' })}
+            />
+          ))}
+        </div>
+      )}
+
+      {clarifyingTopics.length > 0 && (
+        <div className="learning-topics">
+          {clarifyingTopics.map((t) => (
+            <ClarifyingTopicCard
+              key={t.id}
+              topic={t}
+              onContinue={() => requestConsult?.({ role: 'tutor', seedText: '' })}
             />
           ))}
         </div>

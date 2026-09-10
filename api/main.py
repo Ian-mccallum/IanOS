@@ -958,6 +958,7 @@ def _leads_summary(conn, queue: list[dict], today: str) -> dict:
 def _learning_state(conn) -> dict:
     today = db.today()
     topics = learning.active_topics(conn)
+    clarifying = learning.clarifying_topics(conn)
     session = learning.get_session(conn, today)
     streak = learning.compute(conn, date.fromisoformat(today))
     return {
@@ -968,6 +969,14 @@ def _learning_state(conn) -> dict:
                 "confirmed_count": learning.confirmed_session_count(conn, t["id"]),
             }
             for t in topics
+        ],
+        # Mid-onboarding topics (status='clarifying'): never active, never
+        # carries a confirmed_count or a GrowthMark -- a topic with zero
+        # sessions and no profile gets an "unfinished setup" chip on the
+        # dashboard instead, not a fake stage-1 growth stage.
+        "clarifying": [
+            {"id": t["id"], "name": t["name"], "created_at": t["created_at"]}
+            for t in clarifying
         ],
         "today": session,
         "streak": streak,

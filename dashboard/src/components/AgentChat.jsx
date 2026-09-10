@@ -743,6 +743,40 @@ export default function AgentChat({
   const [view, setView] = useState(() => readConsultView())
   useEffect(() => { writeConsultView(view) }, [view])
   const isMobile = useIsMobile()
+  // Desktop 'open' is a full-screen takeover, not a 420px drawer with the
+  // page still readable behind it. The mechanism is the one
+  // SchoolNotebookPage already ships (body.school-note-fullscreen): a body
+  // class the CSS uses to fold the nav rail, the mobile bar and the page's
+  // own header away, so the shell becomes one column and the conversation
+  // gets the whole viewport. Two shapes, decided by where Ian opened it:
+  //   stageHero  Command is the active page, so its Order card stays as a
+  //              narrow left column. CommandPage keeps rendering it, with
+  //              its own state and handlers; only its width changes.
+  //   stage only Anywhere else (Roster's "Ask X", a record Inspect) there is
+  //              no Order to keep, and inventing a stand-in would be a
+  //              second job on someone else's screen (osui L2), so the
+  //              conversation goes edge to edge on its own.
+  const stage = view === 'open' && !isMobile
+  const stageHero = stage && page === 'home'
+  useEffect(() => {
+    const body = document.body
+    body.classList.toggle('consult-stage', stage)
+    body.classList.toggle('consult-stage-hero', stageHero)
+    return () => {
+      body.classList.remove('consult-stage')
+      body.classList.remove('consult-stage-hero')
+    }
+  }, [stage, stageHero])
+  // A takeover leaves nothing visible behind it, and the Order's own primary
+  // action can navigate (a proposal decision routes to Inbox). Landing there
+  // under a full-screen conversation reads as "nothing happened", so leaving
+  // the page is an exit, the same one Escape performs.
+  const stagedPage = useRef(page)
+  useEffect(() => {
+    const previous = stagedPage.current
+    stagedPage.current = page
+    if (previous !== page && stage) setView('dock')
+  }, [page, stage])
   // The portal target CommandPage renders "under the Order". Re-resolved
   // whenever the active page changes (it only exists while page === 'home')
   // or the view changes (so switching into 'dock' immediately re-checks it).
@@ -1235,7 +1269,7 @@ export default function AgentChat({
   // ---- the conversation: header + stream + composer, one flex column -----
   // mode 'dock' is the desktop card under the Order (last exchange + composer,
   // no inner scroller); mode 'open' is the full-height surface (phone: fixed
-  // inset 0; desktop: the right-anchored drawer). Same component either way,
+  // inset 0; desktop: the full-screen stage). Same component either way,
   // so the composer, its draft, and every sub-sheet's state carry across.
   function renderPanel(mode) {
     const compact = mode === 'dock'
@@ -1300,6 +1334,20 @@ export default function AgentChat({
                 aria-label="Open chat"
               >
                 <span aria-hidden="true">⤢</span>
+              </button>
+            ) : stage ? (
+              /* The takeover borrows School's own exit shape (a label plus
+                 the key that also works), placed in the header the close
+                 control already occupied. A second floating bar would land
+                 on exactly these pixels, which is the trap .school-fs-bar
+                 exists to avoid rather than repeat. */
+              <button
+                type="button"
+                className="consult-exit"
+                onClick={closeConversation}
+                aria-label="Close chat"
+              >
+                Exit <kbd>esc</kbd>
               </button>
             ) : (
               <button
@@ -1516,7 +1564,11 @@ export default function AgentChat({
 
   // view === 'open'. Phone: the conversation IS the screen (fixed inset 0,
   // tab bar hidden via body.sheet-open, Escape/focus trap from Sheet).
-  // Desktop: a right-anchored drawer; the page stays usable behind it.
+  // Desktop: a full-screen takeover (body.consult-stage above), still a
+  // drawer-variant Sheet because that variant is the one that stretches full
+  // height, does not dim, and lets the hero column beside it stay clickable.
+  // Its width is what changed: the whole viewport, less the Order column when
+  // Command is the page behind it.
   // Sheet's own head is hidden by CSS on both: the panel's header carries the
   // identity button and the close control.
   return (
@@ -1526,7 +1578,7 @@ export default function AgentChat({
         onClose={closeConversation}
         title={codename}
         variant={isMobile ? 'dialog' : 'drawer'}
-        className={isMobile ? 'consult-sheet consult-sheet--full' : 'consult-sheet consult-sheet--drawer'}
+        className={isMobile ? 'consult-sheet consult-sheet--full' : 'consult-sheet consult-sheet--stage'}
       >
         {renderPanel('open')}
       </Sheet>

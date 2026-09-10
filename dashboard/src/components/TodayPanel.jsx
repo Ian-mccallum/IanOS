@@ -34,6 +34,9 @@ function PlusMark() {
   )
 }
 
+/* SPEC-v41 §4.6: a rolled task's age arrives a second after the row does, so
+   opening Life never greets Ian with a wall of "since". It fades rather than
+   pops, because it arrives into a row that is already sitting still. */
 function RolledAge({ dueDate }) {
   const [show, setShow] = useState(false)
   useEffect(() => {
@@ -45,23 +48,36 @@ function RolledAge({ dueDate }) {
   return <span className="trow-age">since {label}</span>
 }
 
-function TaskRow({ task, today, onToggle, onPriority, onRename, onDelete, onFly }) {
+function TaskRow({ task, today, onComplete, onPriority, onRename, onDelete, onFly }) {
   const [completing, setCompleting] = useState(false)
   const [editing, setEditing] = useState(false)
+  // `title` is what the row shows, `draft` is the editor's buffer. They are
+  // separate so a committed rename paints immediately instead of flashing the
+  // old text back for the length of one /api/state round trip.
+  const [title, setTitle] = useState(task.title)
   const [draft, setDraft] = useState(task.title)
   const priorityRef = useRef(null)
   const inputRef = useRef(null)
+  const timer = useRef(null)
 
+  useEffect(() => { setTitle(task.title) }, [task.title])
   useEffect(() => {
     if (editing) inputRef.current?.focus()
   }, [editing])
+  useEffect(() => () => clearTimeout(timer.current), [])
 
-  const toggle = () => {
-    if (task._done) { onToggle(task); return }
+  const complete = () => {
+    if (completing) return
     // The ring fills and the tick draws before the row leaves, so the tap has
     // a visible result even on a list of one.
     setCompleting(true)
-    setTimeout(() => onToggle(task), 320)
+    timer.current = setTimeout(async () => {
+      const ok = await onComplete(task)
+      // A rejected write must not leave the row struck through and greyed for
+      // the rest of the session: `completing` is local state, so the 15s poll
+      // re-renders a row that goes on claiming it is done.
+      if (!ok) setCompleting(false)
+    }, 320)
   }
 
   const togglePriority = () => {
@@ -71,23 +87,25 @@ function TaskRow({ task, today, onToggle, onPriority, onRename, onDelete, onFly 
     onPriority(task)
   }
 
-  const commit = () => {
+  const commit = async () => {
     const next = draft.trim()
     setEditing(false)
-    if (!next || next === task.title) { setDraft(task.title); return }
-    onRename(task, next)
+    if (!next || next === title) { setDraft(title); return }
+    setTitle(next)
+    const ok = await onRename(task, next)
+    if (!ok) { setTitle(task.title); setDraft(task.title) }
   }
 
   return (
-    <SwipeRow goal={task} onArchive={() => onDelete(task)} archiveLabel="Delete">
-      <div className={`trow${completing ? ' completing' : ''}${task._done ? ' done' : ''}`}>
+    <SwipeRow goal={task} onArchive={() => onDelete(task, title)} archiveLabel="Delete">
+      <div className={`trow${completing ? ' completing' : ''}`}>
         <button
           type="button"
           className="trow-check"
-          onClick={toggle}
-          aria-label={`Mark "${task.title}" done`}
+          onClick={complete}
+          aria-label={`Mark "${title}" done`}
         >
-          <CheckRing done={completing || Boolean(task._done)} />
+          <CheckRing done={completing} />
         </button>
 
         {editing ? (
@@ -99,24 +117,28 @@ function TaskRow({ task, today, onToggle, onPriority, onRename, onDelete, onFly 
             onBlur={commit}
             onKeyDown={(e) => {
               if (e.key === 'Enter') { e.preventDefault(); commit() }
-              if (e.key === 'Escape') { setDraft(task.title); setEditing(false) }
+              if (e.key === 'Escape') { setDraft(title); setEditing(false) }
             }}
             aria-label="Edit task"
           />
         ) : (
-          <button type="button" className="trow-title" onClick={() => setEditing(true)}>
-            {task.title}
+          <button
+            type="button"
+            className="trow-title"
+            onClick={() => { setDraft(title); setEditing(true) }}
+          >
+            {title}
           </button>
         )}
 
-        {task.due_date < today && !task._done && !editing && <RolledAge dueDate={task.due_date} />}
+        {task.due_date < today && !editing && <RolledAge dueDate={task.due_date} />}
 
         <button
           ref={priorityRef}
           type="button"
           className={`trow-star${task.priority ? ' on' : ''}`}
           onClick={togglePriority}
-          aria-label={task.priority ? `Unstar "${task.title}"` : `Star "${task.title}" for Command`}
+          aria-label={task.priority ? `Unstar "${title}"` : `Star "${title}" for Command`}
         >
           <StarMark on={Boolean(task.priority)} />
         </button>
@@ -125,13 +147,40 @@ function TaskRow({ task, today, onToggle, onPriority, onRename, onDelete, onFly 
   )
 }
 
+/* A finished task is reversible from the surface that finished it. The ring in
+   the Done disclosure used to be an inert <span>, so a mis-tap on a 52px row
+   was the one write in this product with no way back, even though the endpoint
+   has taken `{undo: true}` since SPEC-v41 shipped. */
+function DoneRow({ task, onUncomplete }) {
+  return (
+    <div className="trow done">
+      <button
+        type="button"
+        className="trow-check"
+        onClick={() => onUncomplete(task)}
+        aria-label={`Move "${task.title}" back to Today`}
+      >
+        <CheckRing done />
+      </button>
+      <span className="trow-title">{task.title}</span>
+    </div>
+  )
+}
+
 export default function TodayPanel({ tasksToday = [], tasksDoneToday = [], today, refresh, toast, onFlyPriorityDot }) {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const [clearedAll, setClearedAll] = useState(false)
   const composerRef = useRef(null)
+  const clearedTimer = useRef(null)
   const reduced = useReducedMotion()
 
-  const openCount = tasksToday.filter((t) => !t._done).length
+  const openCount = tasksToday.length
+  const doneCount = tasksDoneToday.length
+
+  useEffect(() => () => clearTimeout(clearedTimer.current), [])
+
+  const fail = (e) => { toast?.(e?.message || "couldn't save that", 'crit'); return false }
 
   const add = async () => {
     const title = draft.trim()
@@ -150,34 +199,63 @@ export default function TodayPanel({ tasksToday = [], tasksDoneToday = [], today
     }
   }
 
-  const toggle = async (task) => {
-    await api(`/api/tasks/${task.id}/done`, 'POST', { undo: Boolean(task._done) }, { queueable: true })
-    refresh()
+  const complete = async (task) => {
+    const last = tasksToday.length === 1
+    try {
+      await api(`/api/tasks/${task.id}/done`, 'POST', { undo: false }, { queueable: true })
+      refresh()
+      // SPEC-v41 §4.6: clearing the list says so once, in the composer, and
+      // then stops. Nothing persistent, no badge, no score.
+      if (last) {
+        setClearedAll(true)
+        clearTimeout(clearedTimer.current)
+        clearedTimer.current = setTimeout(() => setClearedAll(false), 3000)
+      }
+      return true
+    } catch (e) { return fail(e) }
+  }
+
+  const uncomplete = async (task) => {
+    try {
+      await api(`/api/tasks/${task.id}/done`, 'POST', { undo: true }, { queueable: true })
+      setClearedAll(false)
+      refresh()
+      return true
+    } catch (e) { return fail(e) }
   }
 
   const setPriority = async (task) => {
     const starring = !task.priority
-    await api(`/api/tasks/${task.id}`, 'PATCH', { priority: starring ? 1 : 0 }, { queueable: true })
+    try {
+      await api(`/api/tasks/${task.id}`, 'PATCH', { priority: starring ? 1 : 0 }, { queueable: true })
+    } catch (e) { return fail(e) }
     refresh()
     // Name the destination. The dot flying to the Command tab is invisible
     // under reduced motion and on the desktop rail, and a starred task lands
     // under "Also on deck" rather than as the headline, so without this the
     // tap has no legible outcome at all.
     toast?.(starring ? 'starred · now on Command' : 'unstarred · off Command', 'good')
+    return true
   }
 
   const rename = async (task, title) => {
-    await api(`/api/tasks/${task.id}`, 'PATCH', { title }, { queueable: true })
+    try {
+      await api(`/api/tasks/${task.id}`, 'PATCH', { title }, { queueable: true })
+    } catch (e) { return fail(e) }
     refresh()
+    return true
   }
 
-  const remove = async (task) => {
-    await api(`/api/tasks/${task.id}`, 'DELETE', undefined, { queueable: true })
+  const remove = async (task, shownTitle) => {
+    try {
+      await api(`/api/tasks/${task.id}`, 'DELETE', undefined, { queueable: true })
+    } catch (e) { return fail(e) }
     refresh()
-    toast?.(`removed "${task.title}"`, 'good', async () => {
+    toast?.(`removed "${shownTitle || task.title}"`, 'good', async () => {
       await api(`/api/tasks/${task.id}/restore`, 'POST', {})
       refresh()
     })
+    return true
   }
 
   const fly = (rect) => { if (!reduced) onFlyPriorityDot?.(rect) }
@@ -200,7 +278,7 @@ export default function TodayPanel({ tasksToday = [], tasksDoneToday = [], today
             key={t.id}
             task={t}
             today={today}
-            onToggle={toggle}
+            onComplete={complete}
             onPriority={setPriority}
             onRename={rename}
             onDelete={remove}
@@ -208,28 +286,35 @@ export default function TodayPanel({ tasksToday = [], tasksDoneToday = [], today
           />
         ))}
 
-        <form className="trow trow-new" onSubmit={(e) => { e.preventDefault(); add() }}>
+        {/* The plus looks like a control and sits in the 34px column every
+            other row's ring is tappable in, so the whole row hands focus to
+            the field rather than leaving a dead target there. */}
+        <form
+          className="trow trow-new"
+          onSubmit={(e) => { e.preventDefault(); add() }}
+          onClick={() => composerRef.current?.focus()}
+        >
           <span className="trow-check trow-check-static"><PlusMark /></span>
           <input
             ref={composerRef}
             className="trow-input"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="New task"
+            placeholder={clearedAll ? 'Done for today' : 'New task'}
             enterKeyHint="done"
             aria-label="New task"
           />
         </form>
       </div>
 
-      {tasksDoneToday.length > 0 && (
-        <details className="today-done-reveal">
-          <summary>{tasksDoneToday.length} done today</summary>
+      {doneCount > 0 && (
+        /* Open when nothing is left: finishing the list used to leave the panel
+           looking empty while the day's actual work sat collapsed behind a
+           disclosure. */
+        <details className="today-done-reveal" open={openCount === 0}>
+          <summary>{doneCount} done today</summary>
           {tasksDoneToday.map((t) => (
-            <div key={t.id} className="trow done">
-              <span className="trow-check trow-check-static"><CheckRing done /></span>
-              <span className="trow-title">{t.title}</span>
-            </div>
+            <DoneRow key={t.id} task={t} onUncomplete={uncomplete} />
           ))}
         </details>
       )}

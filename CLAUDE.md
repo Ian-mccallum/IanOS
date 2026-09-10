@@ -301,8 +301,10 @@ was always context, not a mode.
   row under the Order, no composer, no nested scroller; desktop: the last
   exchange plus composer, no inner scroller) and **open** (phone: the
   conversation is the whole screen, a Sheet stretched to the viewport with
-  the composer pinned above the keyboard and safe area; desktop: a
-  right-anchored drawer the page stays usable behind). The conversation is
+  the composer pinned above the keyboard and safe area; desktop, since
+  2026-09-09, a full-screen two-pane takeover — see "Chat full screen,
+  properly" below, superseding the 420px right-anchored drawer this
+  paragraph used to describe). The conversation is
   one flex column, header / stream / composer; the stream is
   `column-reverse` so nothing ever jumps and no scroll effect exists; no
   `vh` literal is allowed in chat CSS. The composer is never re-parented on
@@ -319,6 +321,62 @@ was always context, not a mode.
 - **The persona is tested.** `tests/test_chat_persona.py` asserts layer
   order, roster coverage, and the nightly/daytime split always; live
   behavioural probes run under `IANOS_PERSONA_EVAL=1`.
+- **Ian is the source of truth on his own life (Ian, 2026-09-09).**
+  `CHAT_LAW_LAYER` (outranks the persona layer) now says explicitly: when
+  Ian states a plan or a fact about himself, that is true, and the agent
+  makes the write. One concern may be named in the same reply; the write is
+  never refused, never gated behind "are you sure?", and never swapped for
+  a different plan. This does not touch correcting him when he is actually
+  wrong about a number or a deadline (`CHAT_VOICE_LAYER`'s "Wrong on the
+  facts" duty stands), and it does not touch a genuine validation failure
+  (a malformed time, a past date), which still fails with the specific
+  reason. A paired rule covers the missing-detail case: when a write is
+  short exactly one thing it genuinely needs (no time on a plan block), the
+  agent asks that one direct question in the same turn rather than
+  inventing a value or refusing outright — never for an optional field
+  (`goal_id` and the like), which is never worth a question. The rule also
+  closed a real internal contradiction the file already had: "Read only...
+  do not call writer tools" sat a few paragraphs above "make the write,"
+  unqualified. That opening line now says explicitly which writer tools it
+  means (the nightly-only ones: memo, fact, brief, focus, proposal), so a
+  model reading top to bottom can't land on the wrong instruction.
+  Verified with two real `run_chat_turn` calls against a `VACUUM INTO`
+  snapshot (never the real db): a clean case with all details given wrote
+  both blocks immediately with no hedging language; a case missing the
+  time asked one direct follow-up and wrote nothing. `tests/test_chat_
+  persona.py::test_law_layer_makes_ian_the_source_of_truth_on_his_own_life`
+  greps for the text so a future edit can't silently drop it.
+- **Chat full screen, properly (Ian, 2026-09-09).** Desktop `open` mode
+  stopped being a 420px right-anchored drawer over an unmodified page — it
+  is a full-screen two-pane takeover, `body.consult-stage` on
+  `dashboard/src/components/AgentChat.jsx`'s `stage` flag
+  (`view === 'open' && !isMobile`), the exact mechanism School's
+  `school-note-fullscreen` already uses: nav rail, mobile bar, the page's
+  own header, and the offline bar all hidden. **Hero case**
+  (`body.consult-stage-hero`, when chat opens while `page === 'home'`):
+  `.page-content` narrows to `--consult-hero-w` (`clamp(320px, 26vw,
+  440px)`, ~393px at 1512px) and CommandPage's Order card — the same DOM,
+  same handlers, never re-implemented — fills it; the chat panel begins
+  exactly where that column ends, a hairline seam with no gap and no
+  overlap (measured live: page-content 0-393, panel 393-1512). A page
+  change while staged auto-exits back to `dock`, since a full takeover
+  leaves nothing showing that a navigation happened otherwise. **Solo
+  case** (opened from anywhere else — Roster "Ask X", a record Inspect,
+  the `consult-pill` re-entry): no hero exists, so the panel is a true
+  edge-to-edge 100vw conversation, and `.page-content` is `visibility:
+  hidden` there — added after live verification caught the underlying
+  page (Body's Sleep card, Confirm gym, The Log) bleeding through the
+  panel's deliberately translucent `--glass-strong` background at full
+  viewport width, which only ever looked fine at the old 420px because the
+  page behind was mostly out of the drawer's way. Mobile (<= 900px) is
+  byte-for-byte unchanged. `Sheet variant="drawer"` is kept deliberately:
+  it is the only variant that is full height, undimmed, and
+  `pointer-events: none` on the wrap with `auto` on the panel, which is
+  what lets the hero column stay clickable. Known gap, not fixed: `Sheet`'s
+  focus trap keeps Tab inside the panel, so the hero column's controls are
+  mouse-reachable but not keyboard-reachable while staged — pre-existing
+  behavior from the old drawer, more conspicuous now that the hero reads
+  as half the layout, fix belongs in `Sheet.jsx` (shared by every overlay).
 
 ### The dispatcher: determinism for detection, LLM only for narration
 
@@ -864,6 +922,56 @@ carries the audit and the per-phase build protocol.
   the codebase (`test_one_goal_insert`); both `POST /api/goals` and
   `chat_write_goal` call it, and both validate `metric_key` against
   `metrics.METRIC_RESOLVERS` (422 on an unknown key) before they do.
+- **The rebuilt Today panel had a broken container (Ian, 2026-09-09, "the
+  life ui page sucks. the to do is terrible").** Two defects came from
+  SPEC-v41 §4.5.2's own CSS, so a code review of `TodayPanel.jsx` alone
+  never surfaced them: `.today-panel` had **zero padding on all four
+  sides** (`.panel` is a bare glass shell, every other bare-`.panel`
+  surface supplies its own inset and this one supplied none), and the
+  -6px optical pull on `.trow-check`/`.trow-star` was silently clipped by
+  `SwipeRow`'s `overflow: hidden`, costing 6px off a 34×44 target. Fixed
+  by moving the -6px bleed up to `.today-rows` (outside the swipe clip)
+  instead of deleting it, and giving `.today-panel` a real `--s4`/`--s5`
+  inset. `.life-page` also had no gap on the phone (only ever declared
+  the desktop grid), so the two panels' hairlines fused into one at
+  375px — the literal "two disconnected widgets" read; `.life-page` now
+  declares `display: flex; flex-direction: column; gap: var(--s4)`.
+  **Three were functional, not aesthetic, and worse than "sucks":**
+  `task._done` never existed anywhere in `dashboard/src` (grepped), so
+  `undo: Boolean(task._done)` was always `false` and the Done disclosure
+  rendered an inert `<span>` — **checking a task off was the one write in
+  the product with no way back**, even though `POST /api/tasks/{id}/done
+  {undo:true}` has existed since SPEC-v41 shipped. Fixed with a real
+  `DoneRow` button. Second: none of `toggle`/`rename`/`remove`/
+  `setPriority` had a try/catch, so a rejected write left a row
+  permanently struck through and greyed with no toast and no recovery —
+  now all five writes are wrapped, and a rejection clears the optimistic
+  state and toasts. Third: a committed rename showed `task.title` (server
+  state, not the local buffer), so the new text visibly flashed back to
+  the old one for the length of the round trip; `title` and `draft` are
+  now split so a commit paints immediately. Also fixed: the mobile
+  composer's `position: sticky` never fired (`.panel { overflow: hidden }`
+  makes `.panel` the scrollport, and it never scrolls, being
+  content-sized), leaving a visibly darker opaque `--bg` band across the
+  composer instead of "the composer is the next line of the list" —
+  deleted. The separator between the last task and the composer could
+  never match (`.trow + .trow::before` needs siblings, and every task row
+  is wrapped in `.swipe-row`, so no `.trow` is ever literally adjacent to
+  another) — a third selector reaches the composer specifically. `<h2>`
+  was riding the UA default (21px/700, heavier than the page title above
+  it) instead of the house type scale. SPEC-v41 §4.6's spec'd delight
+  (finishing the last open task collapses the composer placeholder to
+  "Done for today" for 3s) was never built; it is now, plus the done
+  disclosure opens itself once nothing is left open. `PillarGoalPanel`'s
+  empty `.panel-body` (Sheet returns `null` when closed) held a dead 32px
+  glass strip; `:empty { padding: 0 }` collapses it — the one global CSS
+  change, verified correct by construction for every pillar. Every other
+  page-hierarchy fix is scoped `.life-page` only (verified Body/Partner/
+  School/Money unaffected). **Known, deliberately unfixed:** the Life
+  goal panel's milestone checkbox is a 44px pink-gradient circle in
+  Partner's brand colour with a Unicode `✓`, sitting ~24px below Today's
+  drawn 22px `--good` ring — two checkbox languages on one screen, and
+  fixing it touches BtC and School's deadline rows too.
 
 ### Mr. Miyagi and the Learning pillar (SPEC-v38)
 
@@ -933,6 +1041,26 @@ interaction engine.
   every other non-fixed-tab pillar; add a new page's own `PAGE_TITLES` entry
   in `App.jsx` or it silently falls back to "Command", a bug live browser
   verification caught that no unit test would have.
+- **A clarifying topic was structurally invisible (Ian, 2026-09-09,
+  "doesn't work as intended").** `core/learning.py::clarifying_topics()`
+  already existed (used only by the agent-facing `read_learning` tool);
+  `api/main.py::_learning_state` called only `active_topics()`, so a topic
+  mid-onboarding was absent from `/api/state`'s `learning.topics`, had no
+  card, and had no way to resume it — Ian's own real database had exactly
+  this: a topic named "Ai" created 2026-09-09, `status='clarifying'`, a
+  tutor thread opened a minute later with zero `agent_invocations`
+  (the onboarding conversation never ran a turn), silently gone with no
+  trace. `_learning_state` now also returns `clarifying_topics()` under
+  its own `clarifying` key, and `LearningPage.jsx` renders each as an
+  "Unfinished setup / Setting up: {name}" card, dimmer than an active
+  topic and carrying no `GrowthMark` (a plain chip is more honest than a
+  fake stage-1 growth stage for zero sessions). Its "Continue" action
+  reopens the tutor's thread the same way `TopicCard` already does
+  (`requestConsult({role:'tutor', seedText:''})`); an empty `seedText`
+  only ever populates the composer field, so this cannot overwrite or
+  inject into an ongoing conversation. Verified against a read-only copy
+  of the real database: the fix surfaces exactly Ian's stuck "Ai" topic
+  and clicking it opens Mr. Miyagi's real onboarding thread.
 
 ### Lock screen (SPEC-v12) + brand icons
 

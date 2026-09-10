@@ -802,7 +802,39 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 
 /* ------------------------------------------------ life: today (SPEC-v41) */
 
-.today-panel { display: flex; flex-direction: column; }
+/* Life is two stacked panels and nothing but a page root joins them. Every
+   other page root declares its own column and gap (.partner-page, .school-page,
+   .learning-page); .life-page only ever had the desktop grid further down, so
+   at phone widths the two panels' borders sat flush against each other and
+   read as one broken box instead of two sections of one page. */
+.life-page { display: flex; flex-direction: column; gap: var(--s4); }
+
+/* Both of Life's panels put their content on one left edge (--s4 here, --s5
+   on desktop). They sat at 0 and 24 respectively, so nothing on the page
+   lined up with anything else, and the goal panel's head kept a divider the
+   Today panel's head does not have, which made two sections of one page read
+   as two unrelated widgets. Life-scoped on purpose: on Body, Partner, School
+   and Money the goal panel is one of several unlike surfaces and keeps the
+   standard .panel-head treatment. */
+.life-page .pillar-goal-panel__surface > .panel-head {
+  padding: var(--s4) var(--s4) 0;
+  border-bottom: none;
+}
+.life-page .pillar-goal-panel__surface > .panel-body { padding: var(--s3) var(--s4) var(--s4); }
+/* .panel-head has no margin-left:auto of its own (that lives on the
+   .panel-head-right wrapper this panel does not use), so "Add goal" sat
+   12px after the title with the rest of the row empty and read as part of
+   the heading rather than as the section's action. */
+.life-page .pillar-goal-panel__surface > .panel-head .add-goal { margin-left: auto; }
+
+/* .panel is a bare glass shell: its padding lives on .panel-head/.panel-body
+   and this surface uses neither, so with nothing here the heading sat on the
+   panel's own border, the rings ran into it, and the composer had no floor. */
+.today-panel {
+  display: flex;
+  flex-direction: column;
+  padding: var(--s4);
+}
 
 /* A heading owns the space above it, not below it: the count sits on the
    baseline as data, never as a badge. */
@@ -810,16 +842,32 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
   display: flex;
   align-items: baseline;
   gap: var(--s2);
-  margin-bottom: var(--s2);
+  margin-bottom: var(--s3);
 }
-.today-head h2 { margin: 0; }
+/* House tokens, not the UA default. An unstyled h2 renders 21px/700 here,
+   which made a section heading inside a panel larger and heavier than the
+   page title above it. Same treatment as .page-title, one step of hierarchy
+   below it in position rather than in size. */
+.today-head h2 {
+  margin: 0;
+  font-size: var(--t-lg);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
 .today-count {
   font: 500 var(--t-xs) var(--mono);
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
 
-.today-rows { display: flex; flex-direction: column; }
+/* The list bleeds 6px back into the panel's padding so the ring's STROKE, not
+   its 34px button box, lines up with the panel's content edge. It has to
+   happen on the list and not as a negative margin on .trow-check: every task
+   row is wrapped in SwipeRow's .swipe-row, which is overflow:hidden for the
+   reveal, so the button's overhang was clipped there and quietly cost 6px of
+   a target that is only 34px wide to begin with. */
+.today-rows { display: flex; flex-direction: column; margin-inline: -6px; }
 
 /* One list, hairline-separated and inset to the title's left edge, so the
    controls form a column and the text forms a column. The separator is the
@@ -832,11 +880,17 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
   padding: var(--s1) 0;
   position: relative;
 }
+/* 46px is the 34px control column plus the row's own --s3 gap, i.e. exactly
+   where the title starts; 34px missed it by the gap. The third selector is
+   the composer: it IS a .trow rather than containing one, so neither of the
+   first two could ever match it and the last task ran into the plus row with
+   no hairline between them. */
 .trow + .trow::before,
-.today-rows > * + * .trow::before {
+.today-rows > * + * .trow::before,
+.today-rows > * + .trow-new::before {
   content: '';
   position: absolute;
-  left: 34px; right: 0; top: 0;
+  left: 46px; right: 6px; top: 0;
   height: 1px;
   background: var(--glass-border);
 }
@@ -846,7 +900,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .trow-check {
   width: 34px;
   height: 44px;
-  margin-left: -6px;
   flex: none;
   border: none;
   background: none;
@@ -916,17 +969,21 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 }
 .trow-edit:focus { caret-color: var(--accent); }
 
+/* Mounts a second after its row does (SPEC-v41 §4.6, so opening Life is never
+   a wall of "since"), which means it arrives into a row already sitting still.
+   Without the fade it simply popped in and shoved the title's ellipsis left. */
 .trow-age {
   font: 400 var(--t-xs) var(--mono);
   color: var(--muted);
   flex: none;
+  animation: trow-age-in 260ms ease both;
 }
+@keyframes trow-age-in { from { opacity: 0 } to { opacity: 1 } }
 
 .trow-star {
   position: relative;
   width: 34px;
   height: 44px;
-  margin-right: -6px;
   flex: none;
   border: none;
   background: none;
@@ -963,6 +1020,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
 .action-star { color: var(--accent); margin-right: var(--s2); flex: none; vertical-align: -1px; }
 
 .today-done-reveal { margin-top: var(--s3); }
+/* Vertical padding, not display:flex: a <summary> is display:list-item, and
+   changing that drops the disclosure triangle, which is the only thing saying
+   the row opens. This is the thumb-zone treatment the dense controls get. */
 .today-done-reveal summary {
   font-family: var(--mono);
   font-size: var(--t-xs);
@@ -970,9 +1030,15 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
   letter-spacing: var(--label-tracking);
   color: var(--dim);
   cursor: pointer;
+  padding: var(--s2) 0;
 }
-.today-done-reveal .trow { min-height: 40px; }
-.today-done-reveal .trow-title { color: var(--muted); }
+/* Same -6px bleed as .today-rows so a finished row's ring lands in the same
+   column as an open one; the summary label stays on the panel's own edge. */
+.today-done-reveal .trow { min-height: 44px; margin-inline: -6px; }
+.today-done-reveal .trow-title { color: var(--muted); cursor: default; }
+/* The done ring is already --good, so the shared :hover had nothing to say.
+   Cooling it back to --dim is the hint that this ring goes the other way. */
+.today-done-reveal .trow-check:hover { color: var(--dim); }
 
 .priority-fly-dot {
   position: fixed;
@@ -991,6 +1057,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
   .trow-ring circle,
   .trow-check,
   .trow-star { transition: none; }
+  .trow-age { animation: none; }
 }
 
 /* ------------------------------------------------ learning (SPEC-v38) */
@@ -1035,6 +1102,22 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
   text-align: left; cursor: pointer; min-height: 44px;
 }
 .learning-topic-name { font: 500 var(--t-sm) var(--sans); color: var(--ink); }
+
+/* A topic still mid-onboarding (status='clarifying'): dimmer than a real
+   topic card and dash-bordered so it never reads as an active one, no
+   GrowthMark, an "unfinished setup" chip stands in for it (--dim, not
+   --warn/--crit -- an abandoned setup is not a broken state to fix in a
+   hurry, just an open thread waiting for Ian). */
+.learning-topic-card--clarifying {
+  flex-direction: column; align-items: flex-start; gap: var(--s1);
+  opacity: 0.7; border-style: dashed;
+}
+.learning-unfinished-chip {
+  font: 600 var(--t-xs) var(--sans); letter-spacing: var(--label-tracking);
+  text-transform: uppercase; color: var(--dim);
+  border: 1px solid var(--glass-border); border-radius: var(--radius-sm);
+  padding: 2px var(--s2);
+}
 
 .learning-suggested-card { display: flex; flex-direction: column; gap: var(--s2); }
 .learning-suggested-text { color: var(--dim); font-size: var(--t-sm); margin: 0; }
@@ -1142,8 +1225,10 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
     gap: var(--s5);
     align-items: start;
   }
-  .life-page .today-panel { grid-column: 1; }
+  .life-page .today-panel { grid-column: 1; padding: var(--s5); }
   .life-page .pillar-goal-panel { grid-column: 2; }
+  .life-page .pillar-goal-panel__surface > .panel-head { padding: var(--s5) var(--s5) 0; }
+  .life-page .pillar-goal-panel__surface > .panel-body { padding: var(--s3) var(--s5) var(--s5); }
 
   /* A workspace gets a resolved height from the shell, then hands that height
      down through its own root and principal surface. This is the Plan and
@@ -1409,6 +1494,11 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
   padding: var(--s4) var(--s5);
   scrollbar-width: thin;
 }
+/* A pillar with no goals yet rendered as a 32px strip of glass containing
+   nothing: GoalSheet portals out while it is closed, so the body is genuinely
+   empty. A container with no content reserves no space (osui L3). The head's
+   own "Add goal" button is the whole empty state, and nothing apologises. */
+.pillar-goal-panel__surface > .panel-body:empty { padding: 0; }
 
 /* ------------------------------------------------ markdown (the brief) */
 
@@ -3219,8 +3309,14 @@ input, textarea { caret-color: var(--accent); }
     inset: -18px;
   }
   /* .trow-check and .trow-star are already 34x44 boxes around a 22px icon,
-     so they clear the thumb minimum without an ::after inflating the row. */
-  .trow-new { position: sticky; bottom: 0; background: var(--bg); }
+     so they clear the thumb minimum without an ::after inflating the row.
+
+     `.trow-new { position: sticky; bottom: 0; background: var(--bg) }` was
+     here and is gone. The sticky never fired: .panel is overflow:hidden, so
+     it IS the nearest scrollport, and it is content-sized and never scrolls.
+     All that survived was an opaque --bg fill painting a band darker than the
+     --glass-strong panel across the composer, which is the exact opposite of
+     "the composer is the next line of the list". */
   /* SPEC-v41 §3.1 edit 3: on a tab page the title stays hidden (L3, gate 11:
      the lit tab already says "Partner"); the open-count chip renders alone,
      left-aligned in the title row, because it is data, not a name. */
@@ -8399,10 +8495,12 @@ body.call-mode .nav-mobile { opacity: 0.22; transition: opacity 0.4s ease; }
    states to two. Dock: on the phone a single 44px row under the Order; on
    desktop a card with the last exchange and the composer, no inner
    scroller. Open: on the phone the conversation IS the screen (a Sheet
-   stretched to the full viewport); on desktop a right-anchored drawer the
-   page stays usable behind. Either way the conversation is one flex column,
-   header / stream / composer, with no vh literal anywhere: the column has
-   no number to be wrong. */
+   stretched to the full viewport); on desktop a full-screen takeover, the
+   nav rail and the page header folded away by body.consult-stage, the
+   conversation edge to edge beside a narrow Order column when Command is
+   the page it was opened from. Either way the conversation is one flex
+   column, header / stream / composer, with no vh literal anywhere: the
+   column has no number to be wrong. */
 
 .consult-dock-slot { position: relative; }
 /* The slot is empty while the conversation is open (or off Command); an
@@ -8545,13 +8643,144 @@ body.call-mode .nav-mobile { opacity: 0.22; transition: opacity 0.4s ease; }
 .consult-sheet--full .ac-dock {
   padding-bottom: calc(var(--s3) + env(safe-area-inset-bottom, 0px));
 }
-/* Desktop: the right-anchored drawer, 400px, full shell height. */
+/* Desktop: the takeover. 'open' on a laptop is the whole viewport, not a
+   420px rail with the page still readable behind it. The mechanism is the
+   one SchoolNotebookPage already ships (body.school-note-fullscreen): a
+   body class folds the shell to a single column and hides the chrome the
+   mode replaces, so no second idiom is invented for the same job. It stays
+   a drawer-variant Sheet, because that variant is what makes it undimmed,
+   full height, and non-blocking, which is what keeps the Order column
+   beside it clickable. Escape and the header's Exit are unchanged. */
 @media (min-width: 901px) {
-  .sheet-panel.consult-sheet--drawer {
-    width: min(420px, calc(100vw - 2 * var(--s5)));
-    border-left: 1px solid var(--glass-border);
+  body.consult-stage .app-shell {
+    grid-template-columns: 1fr;
+    grid-template-areas: "main";
   }
-  .consult-sheet--drawer .ac-dock { padding-bottom: var(--s4); }
+  body.consult-stage .nav-wrap,
+  body.consult-stage .nav-mobile,
+  body.consult-stage .app-main > .page-header,
+  body.consult-stage .offline-bar { display: none; }
+  body.consult-stage .app-main {
+    padding:
+      env(safe-area-inset-top, 0px)
+      env(safe-area-inset-right, 0px)
+      env(safe-area-inset-bottom, 0px)
+      env(safe-area-inset-left, 0px);
+    gap: 0;
+  }
+  /* The solo case (stage without a hero) narrows nothing: .page-content sits
+     at its full natural width directly under the panel. The panel's own
+     background is --glass-strong, a deliberately translucent ~0.72 alpha (so
+     a NORMAL-width drawer over a normal-width page reads as glass on top of
+     something) -- at a full 100vw that lets the entire hidden page bleed
+     through as illegible overlapping text. The hero case never had this: the
+     hero column is narrowed to sit beside the panel, never under it. Caught
+     live (Body page, no hero): Sleep/Confirm-gym/The Log all visible through
+     the chat stream. Hiding .page-content here is exactly what "no fake hero
+     is invented" already implies -- nothing behind a true takeover is meant
+     to show. */
+  body.consult-stage:not(.consult-stage-hero) .page-content { visibility: hidden; }
+
+  /* The conversation takes the whole wrap. Where the hero column exists the
+     wrap is inset by exactly its footprint below, so the panel needs no
+     width arithmetic of its own and there is no second number to keep in
+     step: off Command the inset is 0 and the same rule is edge to edge. */
+  .sheet-panel.consult-sheet--stage {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+  /* The Sheet is portaled to body, outside .app-shell, so it collects none
+     of .app-main's safe-area padding: at 901px and up an installed PWA is
+     still reachable (an iPad, or a large iPhone in landscape), and these
+     are the edges that would otherwise sit under the notch or the home
+     indicator (osui L9). */
+  .consult-sheet--stage > .sheet-body {
+    padding:
+      calc(var(--s4) + env(safe-area-inset-top, 0px))
+      calc(var(--s5) + env(safe-area-inset-right, 0px))
+      0
+      max(var(--s5), env(safe-area-inset-left, 0px));
+    overflow: hidden;
+  }
+  /* A 1100px line is not a message. The header keeps the full pane, so its
+     Exit sits in the real top-right corner of the screen rather than
+     floating at the measure's edge; the conversation and the composer take
+     the prose measure and centre under it. */
+  .consult-sheet--stage .ac-stream,
+  .consult-sheet--stage .ac-dock {
+    width: 100%;
+    max-width: var(--content-w);
+    margin-inline: auto;
+  }
+  .consult-sheet--stage .ac-dock {
+    padding-bottom: calc(var(--s5) + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Command behind it: the Order card, at a narrower measure. CommandPage
+     still renders it, with its own state and handlers, so nothing here
+     re-implements the hero; only its width changes. The rail beside it (Do
+     this next, receipts, pillars) is the second job this screen is not
+     asking for (osui L2), so it steps aside with the rest of the chrome. */
+  body.consult-stage-hero { --consult-hero-w: clamp(320px, 26vw, 440px); }
+  body.consult-stage-hero .page-content {
+    width: var(--consult-hero-w);
+    max-width: var(--consult-hero-w);
+    /* No env() here: .app-main already carries the shell's insets above and
+       this sits inside them. */
+    padding: var(--s4) var(--s4) var(--s5) var(--s5);
+  }
+  /* The one number that positions the split, spent once. The wrap is inset
+     by the column's footprint (its width plus whatever inset .app-main spent
+     to its left), so the panel's plain width:100% starts exactly at the
+     column's right edge. pointer-events:none is already on the wrap, so this
+     padding never swallows a click meant for the Order. */
+  body.consult-stage-hero .sheet-wrap--drawer:has(> .consult-sheet--stage) {
+    padding-left: calc(var(--consult-hero-w) + env(safe-area-inset-left, 0px));
+  }
+  body.consult-stage-hero .command-page { max-width: none; margin-inline: 0; }
+  body.consult-stage-hero .command-grid {
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+    gap: var(--s4);
+  }
+  body.consult-stage-hero .command-rail { display: none; }
+  body.consult-stage-hero .command-hero,
+  body.consult-stage-hero .command-orders { max-width: none; }
+}
+
+/* The way out of the takeover, in the header the close control already
+   occupied. School's full-screen bar is fixed top-right for the opposite
+   reason (its header scrolls away); here the panel header is always on
+   screen, so a second floating bar would only stack on the same pixels. */
+.consult-exit {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 44px;
+  padding: 0 var(--s3);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+  transition: color 200ms ease, border-color 200ms ease;
+}
+.consult-exit:hover { color: var(--agent); border-color: var(--agent); }
+.consult-exit:focus-visible { outline: 2px solid var(--agent); outline-offset: 2px; }
+.consult-exit kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--glass-border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .consult-exit { transition: none; }
 }
 
 /* ---- Re-entry pill when Command isn't the active page. Hidden under every

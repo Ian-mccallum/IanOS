@@ -69,6 +69,35 @@ describe('LearningPage', () => {
     await view.unmount()
   })
 
+  it('test_clarifying_topic_renders_unfinished_card_not_a_growth_topic', async () => {
+    // Arrange: one mid-onboarding topic (status='clarifying' server-side,
+    // surfaced under the separate `clarifying` key) and zero active topics.
+    // Act: render the page, then click the unfinished-setup card.
+    // Assert: it renders as its own distinct, dimmer card (not a TopicCard/
+    // GrowthMark), and tapping it reopens the tutor thread with an empty
+    // seedText -- the same thread-reuse behavior as an active topic, never
+    // a forced or overwritten message.
+    const requestConsult = vi.fn()
+    const state = baseState({
+      learning: {
+        topics: [],
+        clarifying: [{ id: 1, name: 'Ai', created_at: '2026-09-09 19:04:52' }],
+        today: null,
+        streak: { streak: 0, stools: 2 },
+      },
+    })
+    const view = await renderPage({ state, requestConsult })
+    expect(view.host.textContent).toMatch(/Setting up: Ai/i)
+    expect(view.host.textContent).toMatch(/Unfinished setup/i)
+    expect(view.host.querySelector('.growth-mark')).toBeFalsy()
+    const card = view.host.querySelector('.learning-topic-card--clarifying')
+    expect(card).toBeTruthy()
+    expect(card.className).not.toMatch(/\btoday-row\b/)
+    await act(async () => card.click())
+    expect(requestConsult).toHaveBeenCalledWith({ role: 'tutor', seedText: '' })
+    await view.unmount()
+  })
+
   it('test_suggested_topic_card_prefills_composer', async () => {
     // Arrange: one pending tutor-authored task proposal.
     // Act: click Start this topic.
